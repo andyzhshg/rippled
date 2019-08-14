@@ -17,28 +17,29 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/test/jtx.h>
+#include <ripple/protocol/jss.h>
+#include <test/jtx.h>
 #include <ripple/beast/unit_test.h>
+
+#include <boost/format.hpp>
 
 namespace ripple {
 
 namespace test {
 
-namespace validator {
-static auto const seed = "ss7t3J9dYentEFgKdPA3q6eyxtrLB";
-static auto const master_key =
-    "nHU4LxxrSQsRTKy5uZbX95eYowoamUEPCcWraxoiCNbtDaUr1V34";
-static auto const signing_key =
-    "n9LHPLA36SBky1YjbaVEApQQ3s9XcpazCgfAG7jsqBb1ugDAosbm";
-// Format manifest string to test trim()
-static auto const manifest =
-    "    JAAAAAFxIe2FwblmJwz4pVYXHLJSzSBgIK7mpQuHNQ88CxW\n"
-    " \tjIN7q4nMhAuUTyasIhvj2KPfNRbmmIBnqNUzidgkKb244eP     \n"
-    "\t794ZpMdkC+8l5n3R/CHP6SAwhYDOaqub0Cs2NjjewBnp1mf\n"
-    "\t 23rhAzdcjRuWzm0IT12eduZ0DwcF5Ng8rAelaYP1iT93ScE\t  \t";
-static auto sequence = 1;
+namespace validator_data {
+static auto const public_key =
+    "nHBt9fsb4849WmZiCds4r5TXyBeQjqnH5kzPtqgMAQMgi39YZRPa";
+
+static auto const token =
+    "eyJ2YWxpZGF0aW9uX3NlY3JldF9rZXkiOiI5ZWQ0NWY4NjYyNDFjYzE4YTI3NDdiNT\n"
+    "QzODdjMDYyNTkwNzk3MmY0ZTcxOTAyMzFmYWE5Mzc0NTdmYTlkYWY2IiwibWFuaWZl\n"
+    "c3QiOiJKQUFBQUFGeEllMUZ0d21pbXZHdEgyaUNjTUpxQzlnVkZLaWxHZncxL3ZDeE\n"
+    "hYWExwbGMyR25NaEFrRTFhZ3FYeEJ3RHdEYklENk9NU1l1TTBGREFscEFnTms4U0tG\n"
+    "bjdNTzJmZGtjd1JRSWhBT25ndTlzQUtxWFlvdUorbDJWMFcrc0FPa1ZCK1pSUzZQU2\n"
+    "hsSkFmVXNYZkFpQnNWSkdlc2FhZE9KYy9hQVpva1MxdnltR21WcmxIUEtXWDNZeXd1\n"
+    "NmluOEhBU1FLUHVnQkQ2N2tNYVJGR3ZtcEFUSGxHS0pkdkRGbFdQWXk1QXFEZWRGdj\n"
+    "VUSmEydzBpMjFlcTNNWXl3TFZKWm5GT3I3QzBrdzJBaVR6U0NqSXpkaXRROD0ifQ==\n";
 }
 
 class ServerInfo_test : public beast::unit_test::suite
@@ -50,15 +51,15 @@ public:
     {
         auto p = std::make_unique<Config>();
         boost::format toLoad(R"rippleConfig(
-[validation_manifest]
+[validator_token]
 %1%
 
-[validation_seed]
+[validators]
 %2%
 )rippleConfig");
 
         p->loadFromString (boost::str (
-            toLoad % validator::manifest % validator::seed));
+            toLoad % validator_data::token % validator_data::public_key));
 
         setupConfigForUnitTests(*p);
 
@@ -71,31 +72,23 @@ public:
 
         {
             Env env(*this);
-            auto const result = env.rpc("server_info", "1");
+            auto const result = env.rpc("server_info");
             BEAST_EXPECT(!result[jss::result].isMember (jss::error));
-            BEAST_EXPECT(result[jss::status] == "success");
+            BEAST_EXPECT(result[jss::result][jss::status] == "success");
             BEAST_EXPECT(result[jss::result].isMember(jss::info));
         }
         {
             Env env(*this, makeValidatorConfig());
-            auto const result = env.rpc("server_info", "1");
+            auto const result = env.rpc("server_info");
             BEAST_EXPECT(!result[jss::result].isMember (jss::error));
-            BEAST_EXPECT(result[jss::status] == "success");
+            BEAST_EXPECT(result[jss::result][jss::status] == "success");
             BEAST_EXPECT(result[jss::result].isMember(jss::info));
             BEAST_EXPECT(result[jss::result][jss::info]
-                [jss::pubkey_validator] == validator::signing_key);
-            BEAST_EXPECT(result[jss::result][jss::info].isMember(
-                jss::validation_manifest));
-            BEAST_EXPECT(result[jss::result][jss::info][jss::validation_manifest]
-                [jss::master_key] == validator::master_key);
-            BEAST_EXPECT(result[jss::result][jss::info][jss::validation_manifest]
-                [jss::signing_key] == validator::signing_key);
-            BEAST_EXPECT(result[jss::result][jss::info][jss::validation_manifest]
-                [jss::seq] == validator::sequence);
+                [jss::pubkey_validator] == validator_data::public_key);
         }
     }
 
-    void run ()
+    void run () override
     {
         testServerInfo ();
     }

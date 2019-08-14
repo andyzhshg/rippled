@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/rpc/RPCHandler.h>
 #include <ripple/rpc/impl/Tuning.h>
@@ -27,16 +26,19 @@
 #include <ripple/app/misc/NetworkOPs.h>
 #include <ripple/basics/contract.h>
 #include <ripple/basics/Log.h>
+#include <ripple/basics/PerfLog.h>
 #include <ripple/core/Config.h>
 #include <ripple/core/JobQueue.h>
 #include <ripple/json/Object.h>
 #include <ripple/json/to_string.h>
 #include <ripple/net/InfoSub.h>
 #include <ripple/net/RPCErr.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/resource/Fees.h>
 #include <ripple/rpc/Role.h>
 #include <ripple/resource/Fees.h>
+#include <atomic>
+#include <chrono>
 
 namespace ripple {
 namespace RPC {
@@ -110,7 +112,7 @@ namespace {
  */
 
 error_code_i fillHandler (Context& context,
-                          boost::optional<Handler const&>& result)
+                          Handler const * & result)
 {
     if (! isUnlimited (context.role))
     {
@@ -124,14 +126,21 @@ error_code_i fillHandler (Context& context,
         }
     }
 
-    if (!context.params.isMember ("command"))
+    if (!context.params.isMember(jss::command) && !context.params.isMember(jss::method))
         return rpcCOMMAND_MISSING;
+    if (context.params.isMember(jss::command) && context.params.isMember(jss::method))
+    {
+        if (context.params[jss::command].asString() !=
+            context.params[jss::method].asString())
+            return rpcUNKNOWN_COMMAND;
+    }
 
-    std::string strCommand  = context.params[jss::command].asString ();
+    std::string strCommand  = context.params.isMember(jss::command) ?
+                              context.params[jss::command].asString() :
+                              context.params[jss::method].asString();
 
     JLOG (context.j.trace()) << "COMMAND:" << strCommand;
     JLOG (context.j.trace()) << "REQUEST:" << context.params;
-
     auto handler = getHandler(strCommand);
 
     if (!handler)
@@ -148,6 +157,13 @@ error_code_i fillHandler (Context& context,
             << context.netOps.strOperatingMode ();
 
         return rpcNO_NETWORK;
+    }
+
+    if (context.app.getOPs().isAmendmentBlocked() &&
+         (handler->condition_ & NEEDS_CURRENT_LEDGER ||
+          handler->condition_ & NEEDS_CLOSED_LEDGER))
+    {
+        return rpcAMENDMENT_BLOCKED;
     }
 
     if (!context.app.config().standalone() &&
@@ -176,7 +192,7 @@ error_code_i fillHandler (Context& context,
         return rpcNO_CLOSED;
     }
 
-    result = *handler;
+    result = handler;
     return rpcSUCCESS;
 }
 
@@ -184,14 +200,22 @@ template <class Object, class Method>
 Status callMethod (
     Context& context, Method method, std::string const& name, Object& result)
 {
+    static std::atomic<std::uint64_t> requestId {0};
+    auto& perfLog = context.app.getPerfLog();
+    std::uint64_t const curId = ++requestId;
     try
     {
-        auto v = context.app.getJobQueue().getLoadEventAP(
+        perfLog.rpcStart(name, curId);
+        auto v = context.app.getJobQueue().makeLoadEvent(
             jtGENERIC, "cmd:" + name);
-        return method (context, result);
+
+        auto ret = method (context, result);
+        perfLog.rpcFinish(name, curId);
+        return ret;
     }
     catch (std::exception& e)
     {
+        perfLog.rpcError(name, curId);
         JLOG (context.j.info()) << "Caught throw: " << e.what ();
 
         if (context.loadType == Resource::feeReferenceRPC)
@@ -211,7 +235,22 @@ void getResult (
     {
         JLOG (context.j.debug()) << "rpcError: " << status.toString();
         result[jss::status] = jss::error;
-        result[jss::request] = context.params;
+
+        auto rq = context.params;
+
+        if (rq.isObject())
+        {
+            if (rq.isMember(jss::passphrase.c_str()))
+                rq[jss::passphrase.c_str()] = "<masked>";
+            if (rq.isMember(jss::secret.c_str()))
+                rq[jss::secret.c_str()] = "<masked>";
+            if (rq.isMember(jss::seed.c_str()))
+                rq[jss::seed.c_str()] = "<masked>";
+            if (rq.isMember(jss::seed_hex.c_str()))
+                rq[jss::seed_hex.c_str()] = "<masked>";
+        }
+
+        result[jss::request] = rq;
     }
     else
     {
@@ -224,7 +263,7 @@ void getResult (
 Status doCommand (
     RPC::Context& context, Json::Value& result)
 {
-    boost::optional <Handler const&> handler;
+    Handler const * handler = nullptr;
     if (auto error = fillHandler (context, handler))
     {
         inject_error (error, result);
@@ -237,13 +276,13 @@ Status doCommand (
             ! context.headers.forwardedFor.empty())
         {
             JLOG(context.j.debug()) << "start command: " << handler->name_ <<
-                ", X-User: " << context.headers.user << ", X-Forwarded-For: " <<
+                ", user: " << context.headers.user << ", forwarded for: " <<
                     context.headers.forwardedFor;
 
             auto ret = callMethod (context, method, handler->name_, result);
 
             JLOG(context.j.debug()) << "finish command: " << handler->name_ <<
-                ", X-User: " << context.headers.user << ", X-Forwarded-For: " <<
+                ", user: " << context.headers.user << ", forwarded for: " <<
                     context.headers.forwardedFor;
 
             return ret;
@@ -255,36 +294,6 @@ Status doCommand (
     }
 
     return rpcUNKNOWN_COMMAND;
-}
-
-/** Execute an RPC command and store the results in a string. */
-void executeRPC (
-    RPC::Context& context, std::string& output)
-{
-    boost::optional <Handler const&> handler;
-    if (auto error = fillHandler (context, handler))
-    {
-        auto wo = Json::stringWriterObject (output);
-        auto&& sub = Json::addObject (*wo, jss::result);
-        inject_error (error, sub);
-    }
-    else if (auto method = handler->objectMethod_)
-    {
-        auto wo = Json::stringWriterObject (output);
-        getResult (context, method, *wo, handler->name_);
-    }
-    else if (auto method = handler->valueMethod_)
-    {
-        auto object = Json::Value (Json::objectValue);
-        getResult (context, method, object, handler->name_);
-        output = to_string (object);
-    }
-    else
-    {
-        // Can't ever get here.
-        assert (false);
-        Throw<std::logic_error> ("RPC handler with no method");
-    }
 }
 
 Role roleRequired (std::string const& method)

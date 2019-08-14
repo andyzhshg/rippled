@@ -25,7 +25,7 @@
 #include <ripple/app/ledger/LedgerMaster.h>
 #include <ripple/ledger/ReadView.h>
 #include <ripple/json/Object.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/rpc/Context.h>
 #include <ripple/rpc/Status.h>
 #include <ripple/rpc/impl/Handler.h>
@@ -55,7 +55,7 @@ public:
     template <class Object>
     void writeResult (Object&);
 
-    static const char* const name()
+    static char const* name()
     {
         return "ledger";
     }
@@ -73,8 +73,10 @@ public:
 private:
     Context& context_;
     std::shared_ptr<ReadView const> ledger_;
+    std::vector<TxQ::TxDetails> queueTxs_;
     Json::Value result_;
     int options_ = 0;
+    LedgerEntryType type_;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -88,7 +90,7 @@ void LedgerHandler::writeResult (Object& value)
     if (ledger_)
     {
         Json::copyFrom (value, result_);
-        addJson (value, {*ledger_, options_});
+        addJson (value, {*ledger_, options_, queueTxs_, type_});
     }
     else
     {

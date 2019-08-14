@@ -1,10 +1,714 @@
-![Ripple](/images/ripple.png)
+# Release Notes
 
-This document contains the release notes for `rippled`, the reference server
-implementation of the Ripple protocol. To learn more about how to build and
-run a `rippled` server, visit https://ripple.com/build/rippled-setup/
+![Ripple](docs/images/ripple.png)
+
+This document contains the release notes for `rippled`, the reference server implementation of the Ripple protocol. To learn more about how to build and run a `rippled` server, visit https://ripple.com/build/rippled-setup/
+
+> **Do you work at a digital asset exchange or wallet provider?** 
+> 
+> Please [contact us](mailto:support@ripple.com). We can help guide your integration.
+
+## Updating `rippled`
+
+If you are using Red Hat Enterprise Linux 7 or CentOS 7, you can [update using `yum`](https://ripple.com/build/rippled-setup/#updating-rippled). For other platforms, please [compile from source](https://wiki.ripple.com/Rippled_build_instructions).
 
 # Releases
+
+## Version 1.3.0
+The `rippled` 1.3.0 release introduces several new features and overall improvements to the codebase, including the `fixMasterKeyAsRegularKey` amendment, code to adjust the timing of the consensus process and support for decentralized validator domain verification. The release also includes miscellaneous improvements including in the transaction censorship detection code, transaction validation code, manifest parsing code, configuration file parsing code, log file rotation code, and in the build, continuous integration, testing and package building pipelines.
+
+**New and Updated Features**
+- The `fixMasterKeyAsRegularKey` amendment which, if enabled, will correct a technical flaw that allowed setting an account's regular key to the account's master key.
+- Code that allows validators to adjust the timing of the consensus process in near-real-time to account for connection delays.
+- Support for decentralized validator domain verification by adding support for a "domain" field in manifests.
+
+**Bug Fixes**
+- Improve ledger trie ancestry tracking to reduce unnecessary error messages.
+- More efficient detection of dry paths in the payment engine. Although not a transaction-breaking change, this should reduces spurious error messages in the log files.
+
+## Version 1.2.4
+
+The `rippled` 1.2.4 release improves the way that shard crawl requests are routed and the robustness of configured validator list retrieval by imposing a 20 second timeout.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Use public keys when routing shard crawl requests
+- Enforce a 20s timeout when making validator list requests (RIPD-1737)
+
+## Version 1.2.3
+
+The `rippled` 1.2.3 release corrects a technical flaw which in some circumstances can cause a null pointer dereference that can crash the server.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Fix a technical flaw which in some circumstances can cause a null pointer dereference that can crash the server.
+
+## Version 1.2.2
+
+The `rippled` 1.2.2 release corrects a technical flaw in the fee escalation
+engine which could cause some fee metrics to be calculated incorrectly. In some
+circumstances this can potentially cause the server to crash.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Fix a technical flaw in the fee escalation engine which could cause some fee metrics to be calculated incorrectly (4c06b3f86)
+
+## Version 1.2.1
+
+The `rippled` 1.2.1 release introduces several fixes including a change in the
+information reported via the enhanced crawl functionality introduced in the
+1.2.0 release, a fix for a potential race condition when processing a status
+change message for a peer, and for a technical flaw that could cause a server
+to not properly detect that it had lost all its peers.
+
+The release also adds the `delivered_amount` field to more responses to simplify
+the handling of payment or check cashing transactions.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Fix a race condition during `TMStatusChange` handling (c8249981)
+- Properly transition state to disconnected (9d027394)
+- Display validator status only in response to admin requests (2d6a518a)
+- Add the `delivered_amount` to more RPC commands (f2756914)
+
+
+## Version 1.2.0
+
+The `rippled` 1.2.0 release introduces the MultisignReserve Amendment, which
+reduces the reserve requirement associated with signer lists. This release also
+includes incremental improvements to the code that handles offers. Furthermore,
+`rippled` now also has the ability to automatically detect transaction
+censorship attempts and issue warnings of increasing severity for transactions
+that should have been included in a closed ledger after several rounds of
+consensus.
+
+**New and Updated Features**
+
+- Reduce the account reserve for a Multisign SignerList (6572fc8)
+- Improve transaction error condition handling (4104778)
+- Allow servers to automatically detect transaction censorship attempts (945493d)
+- Load validator list from file (c1a0244)
+- Add RPC command shard crawl (17e0d09)
+- Add RPC Call unit tests (eeb9d92)
+- Grow the open ledger expected transactions quickly (7295cf9)
+- Avoid dispatching multiple fetch pack threads (4dcb3c9)
+- Remove unused function in AutoSocket.h (8dd8433)
+- Update TxQ developer docs (e14f913)
+- Add user defined literals for megabytes and kilobytes (cd1c5a3)
+- Make the FeeEscalation Amendment permanent (58f786c)
+- Remove undocumented experimental options from RPC sign (a96cb8f)
+- Improve RPC error message for fee command (af1697c)
+- Improve ledger_entry command’s inconsistent behavior (63e167b) 
+
+**Bug Fixes**
+
+- Accept redirects from validator list sites (7fe1d4b)
+- Implement missing string conversions for JSON (c0e9418) 
+- Eliminate potential undefined behavior (c71eb45)
+- Add safe_cast to sure no overflow in casts between enums and integral types (a7e4541)
+
+## Version 1.1.2
+
+The `rippled` 1.1.2 release introduces a fix for an issue that could have
+prevented cluster peers from successfully bypassing connection limits when
+connecting to other servers on the same cluster. Additionally, it improves
+logic used to determine what the preferred ledger is during suboptimal
+network conditions.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Properly bypass connection limits for cluster peers (#2795, #2796)
+- Improve preferred ledger calculation (#2784)
+
+## Version 1.1.1
+
+The `rippled` 1.1.1 release adds support for redirections when retrieving
+validator lists and changes the way that validators with an expired list
+behave. Additionally, informational commands return more useful information
+to allow server operators to determine the state of their server
+
+**New and Updated Features**
+
+- Enhance status reporting when using the `server_info` and `validators` commands (#2734)
+- Accept redirects from validator list sites: (#2715)
+
+**Bug Fixes**
+
+- Properly handle expired validator lists when validating (#2734)
+
+
+
+## Version 1.1.0
+
+The `rippled` 1.1.0 release release includes the `DepositPreAuth` amendment, which combined with the previously released `DepositAuth` amendment, allows users to pre-authorize incoming transactions to accounts, by whitelisting sender addresses. The 1.1.0 release also includes incremental improvements to several previously released features (`fix1515` amendment), deprecates support for the `sign` and `sign_for` commands from the rippled API and improves invariant checking for enhanced security.
+
+Ripple recommends that all server operators upgrade to XRP Ledger version 1.1.0 by Thursday, 2018-09-27, to ensure service continuity.
+
+**New and Updated Features**
+
+- Add `DepositPreAuth` ledger type and transaction (#2513)  
+- Increase fault tolerance and raise validation quorum to 80%, which fixes issue 2604 (#2613)
+- Support ipv6 for peer and RPC comms (#2321)
+- Refactor ledger replay logic (#2477)
+- Improve Invariant Checking (#2532)
+- Expand SQLite potential storage capacity (#2650)
+- Replace UptimeTimer with UptimeClock (#2532)
+- Don’t read Amount field if it is not present (#2566)
+- Remove Transactor:: mFeeDue member variable (#2586)
+- Remove conditional check for using Boost.Process (#2586)
+- Improve charge handling in NoRippleCheckLimits test (#2629)
+- Migrate more code into the chrono type system (#2629)
+- Supply ConsensusTimer with milliseconds for finer precision (#2629)
+- Refactor / modernize Cmake (#2629)
+- Add delimiter when appending to cmake_cxx_flags (#2650)
+- Remove using namespace declarations at namespace scope in headers (#2650)
+
+**Bug Fixes**
+
+- Deprecate the ‘sign’ and ‘sign_for’ APIs (#2657)
+- Use liquidity from strands that consume too many offers, which will be enabled on fix1515 Amendment (#2546)
+- Fix a corner case when decoding base64 (#2605)
+- Trim space in Endpoint::from_string (#2593)
+- Correctly suppress sent messages (#2564)
+- Detect when a unit test child process crashes (#2415)
+- Handle WebSocket construction exceptions (#2629)
+- Improve JSON exception handling (#2605)
+- Add missing virtual destructors (#2532)
+
+
+## Version 1.0.0.
+
+The `rippled` 1.0.0 release includes incremental improvements to several previously released features.
+
+**New and Updated Features**
+
+- The **history sharding** functionality has been improved. Instances can now use the shard store to satisfy ledger requests.
+- Change permessage-deflate and compress defaults (RIPD-506)
+- Update validations on UNL change (RIPD-1566)
+
+**Bug Fixes**
+
+- Add `check`, `escrow`, and `pay_chan` to `ledger_entry` (RIPD-1600)
+- Clarify Escrow semantics (RIPD-1571)
+
+
+## Version 0.90.1
+
+The `rippled` 0.90.1 release includes fixes for issues reported by external security researchers. These issues, when exploited, could cause a rippled instance to restart or, in some circumstances, stop executing. While these issues can result in a denial of service attack, none affect the integrity of the XRP Ledger and no user funds, including XRP, are at risk.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Address issues identified by external review:
+    - Verify serialized public keys more strictly before using them
+      (RIPD-1617, RIPD-1619, RIPD-1621)
+    - Eliminate a potential out-of-bounds memory access in the base58
+      encoding/decoding logic (RIPD-1618)
+    - Avoid invoking undefined behavior in memcpy (RIPD-1616)
+    - Limit STVar recursion during deserialization (RIPD-1603)
+- Use lock when creating a peer shard rangeset
+
+
+## Version 0.90.0
+
+The `rippled` 0.90.0 release introduces several features and enhancements that improve the reliability, scalability and security of the XRP Ledger.
+
+Highlights of this release include:
+
+- The `DepositAuth` amendment, which lets an account strictly reject any incoming money from transactions sent by other accounts.
+- The `Checks` amendment, which allows users to create deferred payments that can be cancelled or cashed by their intended recipients.
+- **History Sharding**, which allows `rippled` servers to distribute historical ledger data if they agree to dedicate storage for segments of ledger history.
+- New **Preferred Ledger by Branch** semantics which improve the logic that allow a server to decide which ledger it should base future ledgers on when there are multiple candidates.
+
+**New and Updated Features**
+
+- Add support for Deposit Authorization account root flag ([#2239](https://github.com/ripple/rippled/issues/2239))
+- Implement history shards ([#2258](https://github.com/ripple/rippled/issues/2258))
+- Preferred ledger by branch ([#2300](https://github.com/ripple/rippled/issues/2300))
+- Redesign Consensus Simulation Framework ([#2209](https://github.com/ripple/rippled/issues/2209))
+- Tune for higher transaction processing ([#2294](https://github.com/ripple/rippled/issues/2294))
+- Optimize queries for `account_tx` to work around SQLite query planner ([#2312](https://github.com/ripple/rippled/issues/2312))
+- Allow `Journal` to be copied/moved ([#2292](https://github.com/ripple/rippled/issues/2292))
+- Cleanly report invalid `[server]` settings ([#2305](https://github.com/ripple/rippled/issues/2305))
+- Improve log scrubbing ([#2358](https://github.com/ripple/rippled/issues/2358))
+- Update `rippled-example.cfg` ([#2307](https://github.com/ripple/rippled/issues/2307))
+- Force json commands to be objects ([#2319](https://github.com/ripple/rippled/issues/2319))
+- Fix cmake clang build for sanitizers ([#2325](https://github.com/ripple/rippled/issues/2325))
+- Allow `account_objects` RPC to filter by “check” ([#2356](https://github.com/ripple/rippled/issues/2356))
+- Limit nesting of json commands ([#2326](https://github.com/ripple/rippled/issues/2326))
+- Unit test that `sign_for` returns a correct hash ([#2333](https://github.com/ripple/rippled/issues/2333))
+- Update Visual Studio build instructions ([#2355](https://github.com/ripple/rippled/issues/2355))
+- Force boost static linking for MacOS builds ([#2334](https://github.com/ripple/rippled/issues/2334))
+- Update MacOS build instructions ([#2342](https://github.com/ripple/rippled/issues/2342))
+- Add dev docs generation to Jenkins ([#2343](https://github.com/ripple/rippled/issues/2343))
+- Poll if process is still alive in Test.py ([#2290](https://github.com/ripple/rippled/issues/2290))
+- Remove unused `beast::currentTimeMillis()` ([#2345](https://github.com/ripple/rippled/issues/2345))
+
+
+**Bug Fixes**
+- Improve error message on mistyped command ([#2283](https://github.com/ripple/rippled/issues/2283))
+- Add missing includes ([#2368](https://github.com/ripple/rippled/issues/2368))
+- Link boost statically only when requested ([#2291](https://github.com/ripple/rippled/issues/2291))
+- Unit test logging fixes ([#2293](https://github.com/ripple/rippled/issues/2293))
+- Fix Jenkins pipeline for branches ([#2289](https://github.com/ripple/rippled/issues/2289))
+- Avoid AppVeyor stack overflow ([#2344](https://github.com/ripple/rippled/issues/2344))
+- Reduce noise in log ([#2352](https://github.com/ripple/rippled/issues/2352))
+
+
+## Version 0.81.0
+
+The `rippled` 0.81.0 release introduces changes that improve the scalability of the XRP Ledger and transitions the recommended validator configuration to a new hosted site, as described in Ripple's [Decentralization Strategy Update](https://ripple.com/dev-blog/decentralization-strategy-update/) post.
+
+**New and Updated Features**
+
+- New hosted validator configuration.
+
+
+**Bug Fixes**
+
+- Optimize queries for account_tx to work around SQLite query planner ([#2312](https://github.com/ripple/rippled/issues/2312))
+
+
+## Version 0.80.2
+
+The `rippled` 0.80.2 release introduces changes that improve the scalability of the XRP Ledger.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Do not dispatch a transaction received from a peer for processing if it has already been dispatched within the past ten seconds.
+- Increase the number of transaction handlers that can be in flight in the job queue and decrease the relative cost for peers to share transaction and ledger data.
+- Make better use of resources by adjusting the number of threads we initialize, by reverting commit [#68b8ffd](https://github.com/ripple/rippled/commit/68b8ffdb638d07937f841f7217edeb25efdb3b5d).
+
+## Version 0.80.1
+
+The `rippled` 0.80.1 release provides several enhancements in support of published validator lists and corrects several bugs.
+
+**New and Updated Features**
+
+- Allow including validator manifests in published list ([#2278](https://github.com/ripple/rippled/issues/2278))
+- Add validator list RPC commands ([#2242](https://github.com/ripple/rippled/issues/2242))
+- Support [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) when querying published list sites and use Windows system root certificates ([#2275](https://github.com/ripple/rippled/issues/2275))
+- Grow TxQ expected size quickly, shrink slowly ([#2235](https://github.com/ripple/rippled/issues/2235))
+
+**Bug Fixes**
+
+- Make consensus quorum unreachable if validator list expires ([#2240](https://github.com/ripple/rippled/issues/2240))
+- Properly use ledger hash to break ties when determing working ledger for consensus ([#2257](https://github.com/ripple/rippled/issues/2257))
+- Explictly use std::deque for missing node handler in SHAMap code ([#2252](https://github.com/ripple/rippled/issues/2252))
+- Verify validator token manifest matches private key ([#2268](https://github.com/ripple/rippled/issues/2268))
+
+
+## Version 0.80.0
+
+The `rippled` 0.80.0 release introduces several enhancements that improve the reliability, scalability and security of the XRP Ledger.
+
+Highlights of this release include:
+
+- The `SortedDirectories` amendment, which allows the entries stored within a page to be sorted, and corrects a technical flaw that could, in some edge cases, prevent an empty intermediate page from being deleted.
+- Changes to the UNL and quorum rules
+  + Use a fixed size UNL if the total listed validators are below threshold
+  + Ensure a quorum of 0 cannot be configured
+  + Set a quorum to provide Byzantine fault tolerance until a threshold of total validators is exceeded, at which time the quorum is 80%
+
+**New and Updated Features**
+
+- Improve directory insertion and deletion ([#2165](https://github.com/ripple/rippled/issues/2165))
+- Move consensus thread safety logic from the generic implementation in Consensus into the RCL adapted version RCLConsensus ([#2106](https://github.com/ripple/rippled/issues/2106))
+- Refactor Validations class into a generic version that can be adapted ([#2084](https://github.com/ripple/rippled/issues/2084))
+- Make minimum quorum Byzantine fault tolerant ([#2093](https://github.com/ripple/rippled/issues/2093))
+- Make amendment blocked state thread-safe and simplify a constructor ([#2207](https://github.com/ripple/rippled/issues/2207))
+- Use ledger hash to break ties ([#2169](https://github.com/ripple/rippled/issues/2169))
+- Refactor RangeSet ([#2113](https://github.com/ripple/rippled/issues/2113))
+
+**Bug Fixes**
+
+- Fix an issue where `setAmendmentBlocked` is only called when processing the `EnableAmendment` transaction for the amendment ([#2137](https://github.com/ripple/rippled/issues/2137))
+- Track escrow in recipient's owner directory ([#2212](https://github.com/ripple/rippled/issues/2212))
+
+## Version 0.70.2
+
+The `rippled` 0.70.2 release corrects an emergent behavior which causes large numbers of transactions to get
+stuck in different nodes' open ledgers without being passed on to validators, resulting in a spike in the open
+ledger fee on those nodes.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Recent fee rises and TxQ issues ([#2215](https://github.com/ripple/rippled/issues/2215))
+
+
+## Version 0.70.1
+
+The `rippled` 0.70.1 release corrects a technical flaw in the newly refactored consensus code that could cause a node to get stuck in consensus due to stale votes from a
+peer, and allows compiling `rippled` under the 1.1.x releases of OpenSSL.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+- Allow compiling against OpenSSL 1.1.0 ([#2151](https://github.com/ripple/rippled/pull/2151))
+- Log invariant check messages at "fatal" level ([2154](https://github.com/ripple/rippled/pull/2154))
+- Fix the consensus code to update all disputed transactions after a node changes a position ([2156](https://github.com/ripple/rippled/pull/2156))
+
+
+## Version 0.70.0
+
+The `rippled` 0.70.0 release introduces several enhancements that improve the reliability, scalability and security of the network.
+
+Highlights of this release include:
+
+- The `FlowCross` amendment, which streamlines offer crossing and autobrigding logic by leveraging the new “Flow” payment engine.
+- The `EnforceInvariants` amendment, which can safeguard the integrity of the XRP Ledger by introducing code that executes after every transaction and ensures that the execution did not violate key protocol rules.
+- `fix1373`, which addresses an issue that would cause payments with certain path specifications to not be properly parsed.
+
+**New and Updated Features**
+
+- Implement and test invariant checks for transactions (#2054)
+- TxQ: Functionality to dump all queued transactions (#2020)
+- Consensus refactor for simulation/cleanup (#2040)
+- Payment flow code should support offer crossing (#1884)
+- make `Config` init extensible via lambda (#1993)
+- Improve Consensus Documentation (#2064)
+- Refactor Dependencies & Unit Test Consensus (#1941)
+- `feature` RPC test (#1988)
+- Add unit Tests for handlers/TxHistory.cpp (#2062)
+- Add unit tests for handlers/AccountCurrenciesHandler.cpp (#2085)
+- Add unit test for handlers/Peers.cpp (#2060)
+- Improve logging for Transaction affects no accounts warning (#2043)
+- Increase logging in PeerImpl fail (#2043)
+- Allow filtering of ledger objects by type in RPC (#2066)
+
+**Bug Fixes**
+
+- Fix displayed warning when generating brain wallets (#2121)
+- Cmake build does not append '+DEBUG' to the version info for non-unity builds
+- Crossing tiny offers can misbehave on RCL
+- `asfRequireAuth` flag not always obeyed (#2092)
+- Strand creating is incorrectly accepting invalid paths
+- JobQueue occasionally crashes on shutdown (#2025)
+- Improve pseudo-transaction handling (#2104)
+
+## Version 0.60.3
+
+The `rippled` 0.60.3 release helps to increase the stability of the network under heavy load.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+Server overlay improvements ([#2110](https://github.com/ripple/rippled/pull/2011))
+
+## Version 0.60.2
+
+The `rippled` 0.60.2 release further strengthens handling of cases associated with a previously patched exploit, in which NoRipple flags were being bypassed by using offers.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+Prevent the ability to bypass the `NoRipple` flag using offers ([#7cd4d78](https://github.com/ripple/rippled/commit/4ff40d4954dfaa237c8b708c2126cb39566776da))
+
+## Version 0.60.1
+
+The `rippled` 0.60.1 release corrects a technical flaw that resulted from using 32-bit space identifiers instead of the protocol-defined 16-bit values for Escrow and Payment Channel ledger entries. rippled version 0.60.1 also fixes a problem where the WebSocket timeout timer would not be cancelled when certain errors occurred during subscription streams. Ripple requires upgrading to rippled version 0.60.1 immediately.
+
+**New and Updated Feature**
+
+This release has no new features.
+
+**Bug Fixes**
+
+Correct calculation of Escrow and Payment Channel indices.
+Fix WebSocket timeout timer issues.
+
+## Version 0.60.0
+
+The `rippled` 0.60.0 release introduces several enhancements that improve the reliability and scalability of the Ripple Consensus Ledger (RCL), including features that add ledger interoperability by improving Interledger Protocol compatibility. Ripple recommends that all server operators upgrade to version 0.60.0 by Thursday, 2017-03-30, for service continuity.
+
+Highlights of this release include:
+
+- `Escrow` (previously called `SusPay`) which permits users to cryptographically escrow XRP on RCL with an expiration date, and optionally a hashlock crypto-condition. Ripple expects Escrow to be enabled via an Amendment named [`Escrow`](https://ripple.com/build/amendments/#escrow) on Thursday, 2017-03-30. See below for details.
+- Dynamic UNL Lite, which allows `rippled` to automatically adjust which validators it trusts based on recommended lists from trusted publishers.
+
+**New and Updated Features**
+
+- Add `Escrow` support (#2039)
+- Dynamize trusted validator list and quorum (#1842)
+- Simplify fee handling during transaction submission (#1992)
+- Publish server stream when fee changes (#2016)
+- Replace manifest with validator token (#1975)
+- Add validator key revocations (#2019)
+- Add `SecretKey` comparison operator (#2004)
+- Reduce `LEDGER_MIN_CONSENSUS` (#2013)
+- Update libsecp256k1 and Beast B30 (#1983)
+- Make `Config` extensible via lambda (#1993)
+- WebSocket permessage-deflate integration (#1995)
+- Do not close socket on a foreign thread (#2014)
+- Update build scripts to support latest boost and ubuntu distros (#1997)
+- Handle protoc targets in scons ninja build (#2022)
+- Specify syntax version for ripple.proto file (#2007)
+- Eliminate protocol header dependency (#1962)
+- Use gnu gold or clang lld linkers if available (#2031)
+- Add tests for `lookupLedger` (#1989)
+- Add unit test for `get_counts` RPC method (#2011)
+- Add test for `transaction_entry` request (#2017)
+- Unit tests of RPC "sign" (#2010)
+- Add failure only unit test reporter (#2018)
+
+**Bug Fixes**
+
+- Enforce rippling constraints during payments (#2049)
+- Fix limiting step re-execute bug (#1936)
+- Make "wss" work the same as "wss2" (#2033)
+- Config test uses unique directories for each test (#1984)
+- Check for malformed public key on payment channel (#2027)
+- Send a websocket ping before timing out in server (#2035)
+
+
+## Version 0.50.3
+
+The `rippled` 0.50.3 release corrects a reported exploit that would allow a combination of trust lines and order books in a payment path to bypass the blocking effect of the [`NoRipple`](https://ripple.com/build/understanding-the-noripple-flag/) flag. Ripple recommends that all server operators immediately upgrade to version 0.50.3.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+Correct a reported exploit that would allow a combination of trust lines and order books in a payment path to bypass the blocking effect of the “NoRipple” flag.
+
+
+## Version 0.50.2
+
+The `rippled` 0.50.2 release adjusts the default TLS cipher list and corrects a flaw that would not allow an SSL handshake to properly complete if the port was configured using the `wss` keyword. Ripple recommends upgrading to 0.50.2 only if server operators are running rippled servers that accept client connections over TLS.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+Adjust the default cipher list and correct a flaw that would not allow an SSL handshake to properly complete if the port was configured using the `wss` keyword (#1985)
+
+
+## Version 0.50.0
+
+The `rippled` 0.50.0 release includes TickSize, which allows gateways to set a "tick size" for assets they issue to help promote faster price discovery and deeper liquidity, as well as reduce transaction spam and ledger churn on RCL. Ripple expects TickSize to be enabled via an Amendment called TickSize on Tuesday, 2017-02-21.
+
+You can [update to the new version](https://ripple.com/build/rippled-setup/#updating-rippled) on Red Hat Enterprise Linux 7 or CentOS 7 using yum. For other platforms, please [compile the new version from source](https://wiki.ripple.com/Rippled_build_instructions).
+
+**New and Updated Features**
+
+**Tick Size**
+
+Currently, offers on RCL can differ by as little as one part in a quadrillion. This means that there is essentially no value to placing an offer early, as an offer placed later at a microscopically better price gets priority over it. The [TickSize](https://ripple.com/build/amendments/#ticksize) Amendment solves this problem by introducing a minimum tick size that a price must move for an offer to be considered to be at a better price. The tick size is controlled by the issuers of the assets involved.
+
+This change lets issuers quantize the exchange rates of offers to use a specified number of significant digits. Gateways must enable a TickSize on their account for this feature to benefit them. A single AccountSet transaction may set a `TickSize` parameter. Legal values are 0 and 3-15 inclusive. Zero removes the setting. 3-15 allow that many decimal digits of precision in the pricing of offers for assets issued by this account. It will still be possible to place an offer to buy or sell any amount of an asset and the offer will still keep that amount as exactly as it does now. If an offer involves two assets that each have a tick size, the smaller number of significant figures (larger ticks) controls.
+
+For asset pairs with XRP, the tick size imposed, if any, is the tick size of the issuer of the non-XRP asset. For asset pairs without XRP, the tick size imposed, if any, is the smaller of the two issuer's configured tick sizes.
+
+The tick size is imposed by rounding the offer quality down to the nearest tick and recomputing the non-critical side of the offer. For a buy, the amount offered is rounded down. For a sell, the amount charged is rounded up.
+
+The primary expected benefit of the TickSize amendment is the reduction of bots fighting over the tip of the order book, which means:
+- Quicker price discovery as outpricing someone by a microscopic amount is made impossible (currently bots can spend hours outbidding each other with no significant price movement)
+- A reduction in offer creation and cancellation spam
+- Traders can't outbid by a microscopic amount
+- More offers left on the books as priority
+
+We also expect larger tick sizes to benefit market makers in the following ways:
+- They increase the delta between the fair market value and the trade price, ultimately reducing spreads
+- They prevent market makers from consuming each other's offers due to slight changes in perceived fair market value, which promotes liquidity
+- They promote faster price discovery by reducing the back and forths required to move the price by traders who don't want to move the price more than they need to
+- They reduce transaction spam by reducing fighting over the tip of the order book and reducing the need to change offers due to slight price changes
+- They reduce ledger churn and metadata sizes by reducing the number of indexes each order book must have
+- They allow the order book as presented to traders to better reflect the actual book since these presentations are inevitably aggregated into ticks
+
+**Hardened TLS configuration**
+
+This release updates the default TLS configuration for rippled. The new release supports only 2048-bit DH parameters and defines a new default set of modern ciphers to use, removing support for ciphers and hash functions that are no longer considered secure.
+
+Server administrators who wish to have different settings can configure custom global and per-port cipher suites in the configuration file using the `ssl_ciphers` directive.
+
+**0.50.0 Change Log**
+
+Remove websocketpp support (#1910)
+
+Increase OpenSSL requirements & harden default TLS cipher suites (#1913)
+
+Move test support sources out of ripple directory (#1916)
+
+Enhance ledger header RPC commands (#1918)
+
+Add support for tick sizes (#1922)
+
+Port discrepancy-test.coffee to c++ (#1930)
+
+Remove redundant call to `clearNeedNetworkLedger` (#1931)
+
+Port freeze-test.coffee to C++ unit test. (#1934)
+
+Fix CMake docs target to work if `BOOST_ROOT` is not set (#1937)
+
+Improve setup for account_tx paging test (#1942)
+
+Eliminate npm tests (#1943)
+
+Port uniport js test to cpp (#1944)
+
+Enable amendments in genesis ledger (#1944)
+
+Trim ledger data in Discrepancy_test (#1948)
+
+Add `current_ledger` field to `fee` result (#1949)
+
+Cleanup unit test support code (#1953)
+
+Add ledger save / load tests (#1955)
+
+Remove unused websocket files (#1957)
+
+Update RPC handler role/usage (#1966)
+
+**Bug Fixes**
+
+Validator's manifest not forwarded beyond directly connected peers (#1919)
+
+**Upcoming Features**
+
+We expect the previously announced Suspended Payments feature, which introduces new transaction types to the Ripple protocol that will permit users to cryptographically escrow XRP on RCL, to be enabled via the [SusPay](https://ripple.com/build/amendments/#suspay) Amendment on Tuesday, 2017-02-21.
+
+Also, we expect support for crypto-conditions, which are signature-like structures that can be used with suspended payments to support ILP integration, to be included in the next rippled release scheduled for March.
+
+Lastly, we do not have an update on the previously announced changes to the hash tree structure that rippled uses to represent a ledger, called [SHAMapV2](https://ripple.com/build/amendments/#shamapv2). At the time of activation, this amendment will require brief scheduled allowable unavailability while the changes to the hash tree structure are computed by the network. We will keep the community updated as we progress towards this date (TBA).
+
+
+## Version 0.40.1
+
+The `rippled` 0.40.1 release  increases SQLite database limits in all rippled servers. Ripple recommends upgrading to 0.40.1 only if server operators are running rippled servers with full-history of the ledger. There are no new or updated features in the 0.40.1 release.
+
+You can update to the new version on Red Hat Enterprise Linux 7 or CentOS 7 using yum. For other platforms, please compile the new version from source.
+
+**New and Updated Features**
+
+This release has no new features.
+
+**Bug Fixes**
+
+Increase SQLite database limits to prevent full-history servers from crashing when restarting. (#1961)
+
+## Version 0.40.0
+
+The `rippled` 0.40.0 release includes Suspended Payments, a new transaction type on the Ripple network that functions similar to an escrow service, which permits users cryptographically escrow XRP on RCL with an expiration date. Ripple expects Suspended Payments to be enabled via an Amendment named [SusPay](https://ripple.com/build/amendments/#suspay) on Tuesday, 2017-01-17.
+
+You can update to the new version on Red Hat Enterprise Linux 7 or CentOS 7 using yum. For other platforms, please compile the new version from source.
+
+**New and Updated Features**
+
+Previously, Ripple announced the introduction of Payment Channels during the release of rippled version 0.33.0, which permit scalable, off-ledger checkpoints of high volume, low value payments flowing in a single direction. This was the first step in a multi-phase effort to make RCL more scalable and to support Interledger Protocol (ILP). Ripple expects Payment Channels to be enabled via an Amendment called [PayChan](https://ripple.com/build/amendments/#paychan) on a future date to be determined.
+
+In the second phase towards making RCL more scalable and compatible with ILP, Ripple is introducing Suspended Payments, a new transaction type on the Ripple network that functions similar to an escrow service, which permits users to cryptographically escrow XRP on RCL with an expiration date. Ripple expects Suspended Payments to be enabled via an Amendment named [SusPay](https://ripple.com/build/amendments/#suspay) on Tuesday, 2017-01-17.
+
+A Suspended Payment can be created, which deducts the funds from the sending account. It can then be either fulfilled or canceled. It can only be fulfilled if the fulfillment transaction makes it into a ledger with a CloseTime lower than the expiry date of the transaction. It can be canceled with a transaction that makes it into a ledger with a CloseTime greater than the expiry date of the transaction.
+
+In the third phase towards making RCL more scalable and compatible with ILP, Ripple plans to introduce additional library support for crypto-conditions, which are distributable event descriptions written in a standard format that describe how to recognize a fulfillment message without saying exactly what the fulfillment is. Fulfillments are cryptographically verifiable messages that prove an event occurred. If you transmit a fulfillment, then everyone who has the condition can agree that the condition has been met. Fulfillment requires the submission of a signature that matches the condition (message hash and public key). This format supports multiple algorithms, including different hash functions and cryptographic signing schemes. Crypto-conditions can be nested in multiple levels, with each level possibly having multiple signatures.
+
+Lastly, we do not have an update on the previously announced changes to the hash tree structure that rippled uses to represent a ledger, called [SHAMapV2](https://ripple.com/build/amendments/#shamapv2). This will require brief scheduled allowable downtime while the changes to the hash tree structure are propagated by the network. We will keep the community updated as we progress towards this date (TBA).
+
+Consensus refactor (#1874)
+
+Bug Fixes
+
+Correct an issue in payment flow code that did not remove an unfunded offer (#1860)
+
+Sign validator manifests with both ephemeral and master keys (#1865)
+
+Correctly parse multi-buffer JSON messages (#1862)
+
+
+## Version 0.33.0
+
+The `rippled` 0.33.0 release includes an improved version of the payment code, which we expect to be activated via Amendment on Wednesday, 2016-10-20 with the name [Flow](https://ripple.com/build/amendments/#flow). We are also introducing XRP Payment Channels, a new structure in the ledger designed to support [Interledger Protocol](https://interledger.org/) trust lines as balances get substantial, which we expect to be activated via Amendment on a future date (TBA) with the name [PayChan](https://ripple.com/build/amendments/#paychan). Lastly, we will be introducing changes to the hash tree structure that rippled uses to represent a ledger, which we expect to be available via Amendment on a future date (TBA) with the name [SHAMapV2](https://ripple.com/build/amendments/#shamapv2).
+
+You can [update to the new version](https://ripple.com/build/rippled-setup/#updating-rippled) on Red Hat Enterprise Linux 7 or CentOS 7 using yum. For other platforms, please [compile the new version from source](https://wiki.ripple.com/Rippled_build_instructions).
+
+** New and Updated Features **
+
+A fixed version of the new payment processing engine, which we initially announced on Friday, 2016-07-29, is expected to be available via Amendment on Wednesday, 2016-10-20 with the name [Flow](https://ripple.com/build/amendments/#flow). The new payments code adds no new features, but improves efficiency and robustness in payment handling.
+
+The Flow code may occasionally produce slightly different results than the old payment processing engine due to the effects of floating point rounding.
+
+We will be introducing changes to the hash tree structure that rippled uses to represent a ledger, which we expect to be activated via Amendment on a future date (TBA) with the name [SHAMapV2](https://ripple.com/build/amendments/#shamapv2). The new structure is more compact and efficient than the previous version. This affects how ledger hashes are calculated, but has no other user-facing consequences. The activation of the SHAMapV2 amendment will require brief scheduled allowable downtime, while the changes to the hash tree structure are propagated by the network. We will keep the community updated as we progress towards this date (TBA).
+
+In an effort to make RCL more scalable and to support Interledger Protocol (ILP) trust lines as balances get more substantial, we’re introducing XRP Payment Channels, a new structure in the ledger, which we expect to be available via Amendment on a future date (TBA) with the name [PayChan](https://ripple.com/build/amendments/#paychan).
+
+XRP Payment Channels permit scalable, intermittent, off-ledger settlement of ILP trust lines for high volume payments flowing in a single direction. For bidirectional channels, an XRP Payment Channel can be used in each direction. The recipient can claim any unpaid balance at any time. The owner can top off the channel as needed. The owner must wait out a delay to close the channel to give the recipient a chance to supply any claims. The total amount paid increases monotonically as newer claims are issued.
+
+The initial concept behind payment channels was discussed as early as 2011 and the first implementation was done by Mike Hearn in bitcoinj. Recent work being done by Lightning Network has showcased examples of the many use cases for payment channels. The introduction of XRP Payment Channels allows for a more efficient integration between RCL and ILP to further support enterprise use cases for high volume payments.
+
+Added `getInfoRippled.sh` support script to gather health check for rippled servers [RIPD-1284]
+
+The `account_info` command can now return information about queued transactions - [RIPD-1205]
+
+Automatically-provided sequence numbers now consider the transaction queue - [RIPD-1206]
+
+The `server_info` and `server_state` commands now include the queue-related escalated fee factor in the load_factor field of the response - [RIPD-1207]
+
+A transaction with a high transaction cost can now cause transactions from the same sender queued in front of it to get into the open ledger if the transaction costs are high enough on average across all such transactions. - [RIPD-1246]
+
+Reorganization: Move `LoadFeeTrack` to app/tx and clean up functions - [RIPD-956]
+
+Reorganization: unit test source files -  [RIPD-1132]
+
+Reorganization: NuDB stand-alone repository - [RIPD-1163]
+
+Reorganization: Add `BEAST_EXPECT` to Beast - [RIPD-1243]
+
+Reorganization: Beast 64-bit CMake/Bjam target on Windows - [RIPD-1262]
+
+** Bug Fixes **
+
+`PaymentSandbox::balanceHook` can return the wrong issuer, which could cause the transfer fee to be incorrectly by-passed in rare circumstances. [RIPD-1274, #1827]
+
+Prevent concurrent write operations in websockets [#1806]
+
+Add HTTP status page for new websocket implementation [#1855]
+
 
 ## Version 0.32.1
 

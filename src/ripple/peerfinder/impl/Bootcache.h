@@ -84,10 +84,20 @@ private:
     using map_type = boost::bimap <left_t, right_t>;
     using value_type = map_type::value_type;
 
-    struct Transform : std::unary_function <
-        map_type::right_map::const_iterator::value_type const&,
-            beast::IP::Endpoint const&>
+    struct Transform
+#ifdef _LIBCPP_VERSION
+        : std::unary_function<
+              map_type::right_map::const_iterator::value_type const&,
+              beast::IP::Endpoint const&>
+#endif
     {
+#ifndef _LIBCPP_VERSION
+        using first_argument_type = map_type::right_map::const_iterator::value_type const&;
+        using result_type = beast::IP::Endpoint const&;
+#endif
+
+        explicit Transform() = default;
+
         beast::IP::Endpoint const& operator() (
             map_type::right_map::
                 const_iterator::value_type const& v) const
@@ -110,6 +120,8 @@ private:
     bool m_needsUpdate;
 
 public:
+    static constexpr int staticValence = 32;
+
     using iterator = boost::transform_iterator <Transform,
         map_type::right_map::const_iterator>;
 
@@ -140,8 +152,11 @@ public:
     /** Load the persisted data from the Store into the container. */
     void load ();
 
-    /** Add the address to the cache. */
+    /** Add a newly-learned address to the cache. */
     bool insert (beast::IP::Endpoint const& endpoint);
+
+    /** Add a staticallyconfigured address to the cache. */
+    bool insertStatic (beast::IP::Endpoint const& endpoint);
 
     /** Called when an outbound connection handshake completes. */
     void on_success (beast::IP::Endpoint const& endpoint);

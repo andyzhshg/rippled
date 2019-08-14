@@ -21,6 +21,7 @@
 #define RIPPLE_SERVER_PLAINWSPEER_H_INCLUDED
 
 #include <ripple/server/impl/BaseWSPeer.h>
+#include <ripple/beast/asio/waitable_timer.h>
 #include <memory>
 
 namespace ripple {
@@ -30,7 +31,6 @@ class PlainWSPeer
     : public BaseWSPeer<Handler, PlainWSPeer<Handler>>
     , public std::enable_shared_from_this<PlainWSPeer<Handler>>
 {
-private:
     friend class BasePeer<Handler, PlainWSPeer>;
     friend class BaseWSPeer<Handler, PlainWSPeer>;
 
@@ -40,7 +40,7 @@ private:
     using waitable_timer = boost::asio::basic_waitable_timer <clock_type>;
     using socket_type = boost::asio::ip::tcp::socket;
 
-    beast::websocket::stream<socket_type> ws_;
+    boost::beast::websocket::stream<socket_type> ws_;
 
 public:
     template<class Body, class Headers>
@@ -48,43 +48,32 @@ public:
         Port const& port,
         Handler& handler,
         endpoint_type remote_address,
-        beast::http::request_v1<Body, Headers>&& request,
+        boost::beast::http::request<Body, Headers>&& request,
         socket_type&& socket,
         beast::Journal journal);
-
-private:
-    void
-    do_close() override;
 };
 
 //------------------------------------------------------------------------------
 
-template<class Handler>
-template<class Body, class Headers>
-PlainWSPeer<Handler>::
-PlainWSPeer(
+template <class Handler>
+template <class Body, class Headers>
+PlainWSPeer<Handler>::PlainWSPeer(
     Port const& port,
     Handler& handler,
     endpoint_type remote_address,
-    beast::http::request_v1<Body, Headers>&& request,
+    boost::beast::http::request<Body, Headers>&& request,
     socket_type&& socket,
     beast::Journal journal)
-    : BaseWSPeer<Handler, PlainWSPeer>(port, handler, remote_address,
-        std::move(request), socket.get_io_service(), journal)
+    : BaseWSPeer<Handler, PlainWSPeer>(
+          port,
+          handler,
+          socket.get_executor(),
+          beast::create_waitable_timer<waitable_timer>(socket),
+          remote_address,
+          std::move(request),
+          journal)
     , ws_(std::move(socket))
 {
-}
-
-template<class Handler>
-void
-PlainWSPeer<Handler>::
-do_close()
-{
-    error_code ec;
-    auto& sock = ws_.next_layer();
-    sock.shutdown(socket_type::shutdown_both, ec);
-    if(ec)
-        return this->fail(ec, "do_close");
 }
 
 } // ripple

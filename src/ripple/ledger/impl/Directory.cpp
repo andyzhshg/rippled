@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/ledger/Directory.h>
 
 namespace ripple {
@@ -60,38 +59,6 @@ Dir::end() const  ->
     return const_iterator(*view_, root_, root_);
 }
 
-const_iterator
-Dir::find(uint256 const& page_key, uint256 const& sle_key) const
-{
-    if (sle_ == nullptr)
-        return end();
-
-    auto it = const_iterator(*view_, root_, keylet::page(page_key, 0));
-    if (root_.key == page_key)
-    {
-        it.sle_ = sle_;
-        it.indexes_ = indexes_;
-    }
-    else
-    {
-        it.sle_ = view_->read(it.page_);
-        if (it.sle_ == nullptr)
-        {
-            it.page_ = root_;
-            return it;
-        }
-        it.indexes_ = &it.sle_->getFieldV256(sfIndexes);
-    }
-
-    it.it_ = std::find(std::begin(*it.indexes_),
-        std::end(*it.indexes_), sle_key);
-    if (it.it_ == std::end(*it.indexes_))
-        return end();
-
-    it.index_ = *it.it_;
-    return it;
-}
-
 bool
 const_iterator::operator==(const_iterator const& other) const
 {
@@ -105,7 +72,7 @@ const_iterator::operator==(const_iterator const& other) const
 const_iterator::reference
 const_iterator::operator*() const
 {
-    assert(index_ != zero);
+    assert(index_ != beast::zero);
     if (! cache_)
         cache_ = view_->read(keylet::child(index_));
     return *cache_;
@@ -114,7 +81,7 @@ const_iterator::operator*() const
 const_iterator&
 const_iterator::operator++()
 {
-    assert(index_ != zero);
+    assert(index_ != beast::zero);
     if (++it_ != std::end(*indexes_))
     {
         index_ = *it_;
@@ -126,7 +93,7 @@ const_iterator::operator++()
         if (next == 0)
         {
             page_.key = root_.key;
-            index_ = zero;
+            index_ = beast::zero;
         }
         else
         {
@@ -136,7 +103,7 @@ const_iterator::operator++()
             indexes_ = &sle_->getFieldV256(sfIndexes);
             if (indexes_->empty())
             {
-                index_ = zero;
+                index_ = beast::zero;
             }
             else
             {
@@ -153,7 +120,7 @@ const_iterator::operator++()
 const_iterator
 const_iterator::operator++(int)
 {
-    assert(index_ != zero);
+    assert(index_ != beast::zero);
     const_iterator tmp(*this);
     ++(*this);
     return tmp;

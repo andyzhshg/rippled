@@ -22,23 +22,17 @@
 
 namespace ripple {
 
-Stoppable::Stoppable (char const* name, RootStoppable& root)
-    : m_name (name)
+Stoppable::Stoppable (std::string name, RootStoppable& root)
+    : m_name (std::move (name))
     , m_root (root)
     , m_child (this)
-    , m_started (false)
-    , m_stopped (false)
-    , m_childrenStopped (false)
 {
 }
 
-Stoppable::Stoppable (char const* name, Stoppable& parent)
-    : m_name (name)
+Stoppable::Stoppable (std::string name, Stoppable& parent)
+    : m_name (std::move (name))
     , m_root (parent.m_root)
     , m_child (this)
-    , m_started (false)
-    , m_stopped (false)
-    , m_childrenStopped (false)
 {
     // Must not have stopping parent.
     assert (! parent.isStopping());
@@ -48,8 +42,6 @@ Stoppable::Stoppable (char const* name, Stoppable& parent)
 
 Stoppable::~Stoppable ()
 {
-    // Children must be stopped.
-    assert (!m_started || m_childrenStopped);
 }
 
 bool Stoppable::isStopping() const
@@ -69,7 +61,9 @@ bool Stoppable::areChildrenStopped () const
 
 void Stoppable::stopped ()
 {
-    m_stoppedEvent.signal();
+    std::lock_guard<std::mutex> lk{m_mut};
+    m_is_stopping = true;
+    m_cv.notify_all();
 }
 
 void Stoppable::onPrepare ()
@@ -109,19 +103,7 @@ void Stoppable::startRecursive ()
 
 void Stoppable::stopAsyncRecursive (beast::Journal j)
 {
-    using namespace std::chrono;
-    auto const start = high_resolution_clock::now();
     onStop ();
-    auto const ms = duration_cast<milliseconds>(
-        high_resolution_clock::now() - start).count();
-
-#ifdef NDEBUG
-    if (ms >= 10)
-        if (auto stream = j.fatal())
-            stream << m_name << "::onStop took " << ms << "ms";
-#else
-    (void)ms;
-#endif
 
     for (Children::const_iterator iter (m_children.cbegin ());
         iter != m_children.cend(); ++iter)
@@ -141,33 +123,35 @@ void Stoppable::stopRecursive (beast::Journal j)
     m_childrenStopped = true;
     onChildrenStopped ();
 
-    // Now block on this Stoppable.
+    // Now block on this Stoppable until m_is_stopping is set by stopped().
     //
-    bool const timedOut (! m_stoppedEvent.wait (1 * 1000)); // milliseconds
-    if (timedOut)
+    using namespace std::chrono_literals;
+    std::unique_lock<std::mutex> lk{m_mut};
+    if (!m_cv.wait_for(lk, 1s, [this]{return m_is_stopping;}))
     {
         if (auto stream = j.error())
             stream << "Waiting for '" << m_name << "' to stop";
-        m_stoppedEvent.wait ();
+        m_cv.wait(lk, [this]{return m_is_stopping;});
     }
-
-    // once we get here, we know the stoppable has stopped.
     m_stopped = true;
 }
 
 //------------------------------------------------------------------------------
 
-RootStoppable::RootStoppable (char const* name)
-    : Stoppable (name, *this)
-    , m_prepared (false)
-    , m_calledStop (false)
-    , m_calledStopAsync (false)
+RootStoppable::RootStoppable (std::string name)
+    : Stoppable (std::move (name), *this)
 {
+}
+
+RootStoppable::~RootStoppable ()
+{
+    using namespace std::chrono_literals;
+    jobCounter_.join(m_name.c_str(), 1s, debugLog());
 }
 
 bool RootStoppable::isStopping() const
 {
-    return m_calledStopAsync;
+    return m_calledStop;
 }
 
 void RootStoppable::prepare ()
@@ -191,25 +175,35 @@ void RootStoppable::stop (beast::Journal j)
     // Must have a prior call to start()
     assert (m_started);
 
-    {
-        std::lock_guard<std::mutex> lock(m_);
-        if (m_calledStop)
-        {
-            if (auto stream = j.warn())
-                stream << "Stoppable::stop called again";
-            return;
-        }
-        m_calledStop = true;
-        c_.notify_all();
-    }
-    stopAsync (j);
-    stopRecursive (j);
+    if (stopAsync (j))
+        stopRecursive (j);
 }
 
-void RootStoppable::stopAsync(beast::Journal j)
+bool RootStoppable::stopAsync (beast::Journal j)
 {
-    if (m_calledStopAsync.exchange (true) == false)
-        stopAsyncRecursive(j);
+    bool alreadyCalled;
+    {
+        // Even though m_calledStop is atomic, we change its value under a
+        // lock.  This removes a small timing window that occurs if the
+        // waiting thread is handling a spurious wakeup while m_calledStop
+        // changes state.
+        std::unique_lock<std::mutex> lock (m_);
+        alreadyCalled = m_calledStop.exchange (true);
+    }
+    if (alreadyCalled)
+    {
+        if (auto stream = j.warn())
+            stream << "Stoppable::stop called again";
+        return false;
+    }
+
+    // Wait until all in-flight JobQueue Jobs are completed.
+    using namespace std::chrono_literals;
+    jobCounter_.join (m_name.c_str(), 1s, j);
+
+    c_.notify_all();
+    stopAsyncRecursive(j);
+    return true;
 }
 
 }

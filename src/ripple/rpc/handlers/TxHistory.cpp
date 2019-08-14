@@ -17,14 +17,13 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/app/misc/Transaction.h>
 #include <ripple/core/DatabaseCon.h>
 #include <ripple/core/SociDB.h>
 #include <ripple/net/RPCErr.h>
-#include <ripple/protocol/JsonFields.h>
 #include <ripple/protocol/ErrorCodes.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/resource/Fees.h>
 #include <ripple/rpc/Context.h>
 #include <ripple/rpc/Role.h>
@@ -82,7 +81,7 @@ Json::Value doTxHistory (RPC::Context& context)
 
             if (auto trans = Transaction::transactionFromSQL (
                     ledgerSeq, status, rawTxn, context.app))
-                txs.append (trans->getJson (0));
+                txs.append (trans->getJson (JsonOptions::none));
         }
     }
 

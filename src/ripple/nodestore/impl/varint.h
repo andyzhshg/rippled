@@ -20,13 +20,12 @@
 #ifndef BEAST_NUDB_VARINT_H_INCLUDED
 #define BEAST_NUDB_VARINT_H_INCLUDED
 
-#include <ripple/beast/nudb/detail/stream.h>
+#include <nudb/detail/stream.hpp>
 #include <cstdint>
 #include <type_traits>
 
 namespace ripple {
 namespace NodeStore {
-namespace detail {
 
 // This is a variant of the base128 varint format from
 // google protocol buffers:
@@ -45,6 +44,8 @@ struct varint_traits;
 template <class T>
 struct varint_traits<T, true>
 {
+    explicit varint_traits() = default;
+
     static std::size_t constexpr max =
         (8 * sizeof(T) + 6) / 7;
 };
@@ -127,7 +128,7 @@ write_varint (void* p0, std::size_t v)
 template <class T, std::enable_if_t<
     std::is_same<T, varint>::value>* = nullptr>
 void
-read (beast::nudb::detail::istream& is, std::size_t& u)
+read (nudb::detail::istream& is, std::size_t& u)
 {
     auto p0 = is(1);
     auto p1 = p0;
@@ -141,13 +142,12 @@ read (beast::nudb::detail::istream& is, std::size_t& u)
 template <class T, std::enable_if_t<
     std::is_same<T, varint>::value>* = nullptr>
 void
-write (beast::nudb::detail::ostream& os, std::size_t t)
+write (nudb::detail::ostream& os, std::size_t t)
 {
     write_varint(os.data(
         size_varint(t)), t);
 }
 
-} // detail
 } // NodeStore
 } // ripple
 

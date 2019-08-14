@@ -25,10 +25,14 @@
 
 namespace ripple {
 
+class Invariants_test;
+
 class STLedgerEntry final
     : public STObject
     , public CountedObject <STLedgerEntry>
 {
+    friend Invariants_test; // this test wants access to the private type_
+
 public:
     static char const* getCountedObjectName () { return "STLedgerEntry"; }
 
@@ -45,14 +49,11 @@ public:
     {
     }
 
-    STLedgerEntry (const Serializer & s, uint256 const& index);
-
     STLedgerEntry (SerialIter & sit, uint256 const& index);
     STLedgerEntry(SerialIter&& sit, uint256 const& index)
         : STLedgerEntry(sit, index) {}
 
-
-    STLedgerEntry (const STObject & object, uint256 const& index);
+    STLedgerEntry (STObject const& object, uint256 const& index);
 
     STBase*
     copy (std::size_t n, void* buf) const override
@@ -75,7 +76,7 @@ public:
 
     std::string getText () const override;
 
-    Json::Value getJson (int options) const override;
+    Json::Value getJson (JsonOptions options) const override;
 
     /** Returns the 'key' (or 'index') of this item.
         The key identifies this entry's position in
@@ -87,42 +88,19 @@ public:
         return key_;
     }
 
-    // DEPRECATED
-    uint256 const& getIndex () const
-    {
-        return key_;
-    }
-
-    void setImmutable ()
-    {
-        mMutable = false;
-    }
-
-    bool isMutable ()
-    {
-        return mMutable;
-    }
-
     LedgerEntryType getType () const
     {
         return type_;
     }
 
-    std::uint16_t getVersion () const
-    {
-        return getFieldU16 (sfLedgerEntryType);
-    }
+    // is this a ledger entry that can be threaded
+    bool isThreadedType() const;
 
-    bool isThreadedType() const; // is this a ledger entry that can be threaded
-
-    bool isThreaded () const;     // is this ledger entry actually threaded
-
-    uint256 getThreadedTransaction () const;
-
-    std::uint32_t getThreadedLedger () const;
-
-    bool thread (uint256 const& txID, std::uint32_t ledgerSeq, uint256 & prevTxID,
-                 std::uint32_t & prevLedgerID);
+    bool thread (
+        uint256 const& txID,
+        std::uint32_t ledgerSeq,
+        uint256 & prevTxID,
+        std::uint32_t & prevLedgerID);
 
 private:
     /*  Make STObject comply with the template for this SLE type
@@ -133,8 +111,6 @@ private:
 private:
     uint256 key_;
     LedgerEntryType type_;
-    LedgerFormats::Item const*  mFormat;
-    bool mMutable;
 };
 
 using SLE = STLedgerEntry;

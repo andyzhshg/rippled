@@ -26,16 +26,16 @@
 
 namespace ripple {
 
-enum TokenType
+enum class TokenType : std::uint8_t
 {
-    TOKEN_NONE              = 1,
-    TOKEN_NODE_PUBLIC       = 28,
-    TOKEN_NODE_PRIVATE      = 32,
-    TOKEN_ACCOUNT_ID        = 0,
-    TOKEN_ACCOUNT_PUBLIC    = 35,
-    TOKEN_ACCOUNT_SECRET    = 34,
-    TOKEN_FAMILY_GENERATOR  = 41,
-    TOKEN_FAMILY_SEED       = 33
+    None             = 1,       // unused
+    NodePublic       = 28,
+    NodePrivate      = 32,
+    AccountID        = 0,
+    AccountPublic    = 35,
+    AccountSecret    = 34,
+    FamilyGenerator  = 41,      // unused
+    FamilySeed       = 33
 };
 
 template <class T>
@@ -69,12 +69,24 @@ parseHexOrBase58 (std::string const& s);
         Account Public Key
         Account ID
 
-    @param temp A pointer to storage of not
-                less than 2*(size+6) bytes
+    @param type A single byte representing the TokenType
+    @param token A pointer to storage of not
+                 less than 2*(size+6) bytes
+    @param size the size of the token buffer in bytes
 */
 std::string
-base58EncodeToken (std::uint8_t type,
-    void const* token, std::size_t size);
+base58EncodeToken (TokenType type, void const* token, std::size_t size);
+
+/*  Base-58 encode a Bitcoin Token
+ *
+ *  provided here for symmetry, but should never be needed
+ *  except for testing.
+ *
+ *  @see base58EncodeToken for format description.
+ *
+ */
+std::string
+base58EncodeTokenBitcoin (TokenType type, void const* token, std::size_t size);
 
 /** Decode a Base58 token
 
@@ -82,8 +94,7 @@ base58EncodeToken (std::uint8_t type,
     empty string is returned.
 */
 std::string
-decodeBase58Token(
-    std::string const& s, int type);
+decodeBase58Token(std::string const& s, TokenType type);
 
 /** Decode a Base58 token using Bitcoin alphabet
 
@@ -96,8 +107,7 @@ decodeBase58Token(
     may be returned.
 */
 std::string
-decodeBase58TokenBitcoin(
-    std::string const& s, int type);
+decodeBase58TokenBitcoin(std::string const& s, TokenType type);
 
 } // ripple
 

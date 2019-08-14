@@ -20,6 +20,7 @@
 #ifndef RIPPLE_NET_HTTPCLIENT_H_INCLUDED
 #define RIPPLE_NET_HTTPCLIENT_H_INCLUDED
 
+#include <ripple/basics/ByteUtilities.h>
 #include <ripple/core/Config.h>
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/streambuf.hpp>
@@ -32,12 +33,11 @@ namespace ripple {
 class HTTPClient
 {
 public:
-    enum
-    {
-        maxClientHeaderBytes = 32 * 1024
-    };
+    explicit HTTPClient() = default;
 
-    static void initializeSSLContext (Config const& config);
+    static constexpr auto maxClientHeaderBytes = kilobytes(32);
+
+    static void initializeSSLContext (Config const& config, beast::Journal j);
 
     static void get (
         bool bSSL,
@@ -45,10 +45,10 @@ public:
         std::deque <std::string> deqSites,
         const unsigned short port,
         std::string const& strPath,
-        std::size_t responseMax,
+        std::size_t responseMax,    // if no Content-Length header
         std::chrono::seconds timeout,
         std::function <bool (const boost::system::error_code& ecResult, int iStatus, std::string const& strData)> complete,
-        Logs& l);
+        beast::Journal& j);
 
     static void get (
         bool bSSL,
@@ -56,10 +56,10 @@ public:
         std::string strSite,
         const unsigned short port,
         std::string const& strPath,
-        std::size_t responseMax,
+        std::size_t responseMax,    // if no Content-Length header
         std::chrono::seconds timeout,
         std::function <bool (const boost::system::error_code& ecResult, int iStatus, std::string const& strData)> complete,
-        Logs& l);
+        beast::Journal& j);
 
     static void request (
         bool bSSL,
@@ -67,10 +67,10 @@ public:
         std::string strSite,
         const unsigned short port,
         std::function <void (boost::asio::streambuf& sb, std::string const& strHost)> build,
-        std::size_t responseMax,
+        std::size_t responseMax,    // if no Content-Length header
         std::chrono::seconds timeout,
         std::function <bool (const boost::system::error_code& ecResult, int iStatus, std::string const& strData)> complete,
-        Logs& l);
+        beast::Journal& j);
 };
 
 } // ripple

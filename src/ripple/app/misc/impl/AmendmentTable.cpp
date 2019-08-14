@@ -17,13 +17,12 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/app/misc/AmendmentTable.h>
-#include <ripple/app/misc/Validations.h>
+#include <ripple/protocol/STValidation.h>
 #include <ripple/core/DatabaseCon.h>
 #include <ripple/core/ConfigSections.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/protocol/TxFlags.h>
 #include <boost/format.hpp>
 #include <boost/regex.hpp>
@@ -91,7 +90,7 @@ struct AmendmentState
     /** The name of this amendment, possibly empty. */
     std::string name;
 
-    AmendmentState () = default;
+    explicit AmendmentState () = default;
 };
 
 /** The status of all amendments requested in a given window. */
@@ -157,6 +156,9 @@ protected:
     // we haven't participated in one yet.
     std::unique_ptr <AmendmentSet> lastVote_;
 
+    // True if an unsupported amendment is enabled
+    bool unsupportedEnabled_;
+
     beast::Journal j_;
 
     // Finds or creates state
@@ -187,6 +189,8 @@ public:
     bool isEnabled (uint256 const& amendment) override;
     bool isSupported (uint256 const& amendment) override;
 
+    bool hasUnsupportedEnabled () override;
+
     Json::Value getJson (int) override;
     Json::Value getJson (uint256 const&) override;
 
@@ -199,12 +203,15 @@ public:
     std::vector <uint256>
     doValidation (std::set<uint256> const& enabledAmendments) override;
 
+    std::vector <uint256>
+    getDesired () override;
+
     std::map <uint256, std::uint32_t>
     doVoting (
         NetClock::time_point closeTime,
         std::set<uint256> const& enabledAmendments,
         majorityAmendments_t const& majorityAmendments,
-        ValidationSet const& validations) override;
+        std::vector<STValidation::pointer> const& validations) override;
 };
 
 //------------------------------------------------------------------------------
@@ -219,6 +226,7 @@ AmendmentTableImpl::AmendmentTableImpl (
     : lastUpdateSeq_ (0)
     , majorityTime_ (majorityTime)
     , majorityFraction_ (majorityFraction)
+    , unsupportedEnabled_ (false)
     , j_ (journal)
 {
     assert (majorityFraction_ != 0);
@@ -337,6 +345,14 @@ AmendmentTableImpl::enable (uint256 const& amendment)
         return false;
 
     s->enabled = true;
+
+    if (! s->supported)
+    {
+        JLOG (j_.error()) <<
+            "Unsupported amendment " << amendment << " activated.";
+        unsupportedEnabled_ = true;
+    }
+
     return true;
 }
 
@@ -369,6 +385,13 @@ AmendmentTableImpl::isSupported (uint256 const& amendment)
     return s && s->supported;
 }
 
+bool
+AmendmentTableImpl::hasUnsupportedEnabled ()
+{
+    std::lock_guard <std::mutex> sl (mutex_);
+    return unsupportedEnabled_;
+}
+
 std::vector <uint256>
 AmendmentTableImpl::doValidation (
     std::set<uint256> const& enabled)
@@ -390,10 +413,17 @@ AmendmentTableImpl::doValidation (
         }
     }
 
-    if (!amendments.empty())
+    if (! amendments.empty())
         std::sort (amendments.begin (), amendments.end ());
 
     return amendments;
+}
+
+std::vector <uint256>
+AmendmentTableImpl::getDesired ()
+{
+    // Get the list of amendments we support and do not veto
+    return doValidation({});
 }
 
 std::map <uint256, std::uint32_t>
@@ -401,7 +431,7 @@ AmendmentTableImpl::doVoting (
     NetClock::time_point closeTime,
     std::set<uint256> const& enabledAmendments,
     majorityAmendments_t const& majorityAmendments,
-    ValidationSet const& valSet)
+    std::vector<STValidation::pointer> const& valSet)
 {
     JLOG (j_.trace()) <<
         "voting at " << closeTime.time_since_epoch().count() <<
@@ -412,16 +442,16 @@ AmendmentTableImpl::doVoting (
     auto vote = std::make_unique <AmendmentSet> ();
 
     // process validations for ledger before flag ledger
-    for (auto const& entry : valSet)
+    for (auto const& val : valSet)
     {
-        if (entry.second->isTrusted ())
+        if (val->isTrusted ())
         {
             std::set<uint256> ballot;
 
-            if (entry.second->isFieldPresent (sfAmendments))
+            if (val->isFieldPresent (sfAmendments))
             {
                 auto const choices =
-                    entry.second->getFieldV256 (sfAmendments);
+                    val->getFieldV256 (sfAmendments);
                 ballot.insert (choices.begin (), choices.end ());
             }
 
@@ -513,10 +543,8 @@ AmendmentTableImpl::doValidatedLedger (
     LedgerIndex ledgerSeq,
     std::set<uint256> const& enabled)
 {
-    std::lock_guard <std::mutex> sl (mutex_);
-
-    for (auto& e : amendmentMap_)
-        e.second.enabled = (enabled.count (e.first) != 0);
+    for (auto& e : enabled)
+        enable(e);
 }
 
 void

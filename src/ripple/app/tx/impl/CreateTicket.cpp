@@ -17,21 +17,23 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/tx/impl/CreateTicket.h>
 #include <ripple/app/ledger/Ledger.h>
 #include <ripple/basics/Log.h>
 #include <ripple/protocol/Feature.h>
 #include <ripple/protocol/Indexes.h>
+#include <ripple/protocol/TxFlags.h>
 
 namespace ripple {
 
-TER
+NotTEC
 CreateTicket::preflight (PreflightContext const& ctx)
 {
-    if (! ctx.rules.enabled(featureTickets,
-            ctx.app.config().features))
+    if (! ctx.rules.enabled(featureTickets))
         return temDISABLED;
+
+    if (ctx.tx.getFlags() & tfUniversalMask)
+        return temINVALID_FLAG;
 
     auto const ret = preflight1 (ctx);
     if (!isTesSuccess (ret))
@@ -100,27 +102,24 @@ CreateTicket::doApply ()
             sleTicket->setAccountID (sfTarget, target_account);
     }
 
-    std::uint64_t hint;
-
     auto viewJ = ctx_.app.journal ("View");
 
-    auto result = dirAdd(view(), hint, keylet::ownerDir (account_),
-        sleTicket->getIndex (), describeOwnerDir (account_), viewJ);
+    auto const page = dirAdd(view(), keylet::ownerDir (account_),
+        sleTicket->key(), false, describeOwnerDir (account_), viewJ);
 
     JLOG(j_.trace()) <<
-        "Creating ticket " << to_string (sleTicket->getIndex ()) <<
-        ": " << transHuman (result.first);
+        "Creating ticket " << to_string (sleTicket->key()) <<
+        ": " << (page ? "success" : "failure");
 
-    if (result.first == tesSUCCESS)
-    {
-        sleTicket->setFieldU64(sfOwnerNode, hint);
+    if (!page)
+        return tecDIR_FULL;
 
-        // If we succeeded, the new entry counts agains the
-        // creator's reserve.
-        adjustOwnerCount(view(), sle, 1, viewJ);
-    }
+    sleTicket->setFieldU64(sfOwnerNode, *page);
 
-    return result.first;
+    // If we succeeded, the new entry counts against the
+    // creator's reserve.
+    adjustOwnerCount(view(), sle, 1, viewJ);
+    return tesSUCCESS;
 }
 
 }

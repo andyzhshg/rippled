@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013-2016 Vinnie Falco (vinnie dot falco at gmail dot com)
+// Copyright (c) 2013-2017 Vinnie Falco (vinnie dot falco at gmail dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,11 +9,12 @@
 #define BEAST_TEST_FAIL_COUNTER_HPP
 
 #include <beast/core/error.hpp>
+#include <boost/throw_exception.hpp>
 
 namespace beast {
 namespace test {
 
-enum error
+enum class error
 {
     fail_error = 1
 };
@@ -77,14 +78,35 @@ inline
 error_code
 make_error_code(error ev)
 {
-    return error_code{static_cast<int>(ev),
-        detail::get_error_category()};
+    return error_code{
+        static_cast<std::underlying_type<error>::type>(ev),
+            detail::get_error_category()};
 }
+
+/** An error code with an error set on default construction
+
+    Default constructed versions of this object will have
+    an error code set right away. This helps tests find code
+    which forgets to clear the error code on success.
+*/
+struct fail_error_code : error_code
+{
+    fail_error_code()
+        : error_code(make_error_code(error::fail_error))
+    {
+    }
+
+    template<class Arg0, class... ArgN>
+    fail_error_code(Arg0&& arg0, ArgN&&... argn)
+        : error_code(arg0, std::forward<ArgN>(argn)...)
+    {
+    }
+};
 
 /** A countdown to simulated failure.
 
     On the Nth operation, the class will fail with the specified
-    error code, or the default error code of @ref fail_error.
+    error code, or the default error code of @ref error::fail_error.
 */
 class fail_counter
 {
@@ -100,7 +122,7 @@ public:
     */
     explicit
     fail_counter(std::size_t n,
-            error_code ev = make_error_code(fail_error))
+            error_code ev = make_error_code(error::fail_error))
         : n_(n)
         , ec_(ev)
     {
@@ -113,7 +135,7 @@ public:
         if(n_ > 0)
             --n_;
         if(! n_)
-            throw system_error{ec_};
+            BOOST_THROW_EXCEPTION(system_error{ec_});
     }
 
     /// Set an error code on the Nth failure
@@ -127,6 +149,7 @@ public:
             ec = ec_;
             return true;
         }
+        ec.assign(0, ec.category());
         return false;
     }
 };

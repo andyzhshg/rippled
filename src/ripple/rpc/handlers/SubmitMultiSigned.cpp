@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/ledger/LedgerMaster.h>
 #include <ripple/protocol/ErrorCodes.h>
 #include <ripple/protocol/Feature.h>
@@ -35,7 +34,7 @@ Json::Value doSubmitMultiSigned (RPC::Context& context)
 {
     // Bail if multisign is not enabled.
     if (! context.app.getLedgerMaster().getValidatedRules().
-        enabled (featureMultiSign, context.app.config().features))
+        enabled (featureMultiSign))
     {
         RPC::inject_error (rpcNOT_ENABLED, context.params);
         return context.params;

@@ -39,6 +39,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <boost/container/flat_set.hpp>
 
 namespace beast {
 
@@ -98,22 +99,30 @@ struct is_uniquely_represented
     : public std::integral_constant<bool, std::is_integral<T>::value ||
                                           std::is_enum<T>::value     ||
                                           std::is_pointer<T>::value>
-{};
+{
+    explicit is_uniquely_represented() = default;
+};
 
 template <class T>
 struct is_uniquely_represented<T const>
     : public is_uniquely_represented<T>
-{};
+{
+    explicit is_uniquely_represented() = default;
+};
 
 template <class T>
 struct is_uniquely_represented<T volatile>
     : public is_uniquely_represented<T>
-{};
+{
+    explicit is_uniquely_represented() = default;
+};
 
 template <class T>
 struct is_uniquely_represented<T const volatile>
     : public is_uniquely_represented<T>
-{};
+{
+    explicit is_uniquely_represented() = default;
+};
 
 // is_uniquely_represented<std::pair<T, U>>
 
@@ -123,6 +132,7 @@ struct is_uniquely_represented<std::pair<T, U>>
                                           is_uniquely_represented<U>::value &&
                                           sizeof(T) + sizeof(U) == sizeof(std::pair<T, U>)>
 {
+    explicit is_uniquely_represented() = default;
 };
 
 // is_uniquely_represented<std::tuple<T...>>
@@ -133,6 +143,7 @@ struct is_uniquely_represented<std::tuple<T...>>
             static_and<is_uniquely_represented<T>::value...>::value &&
             static_sum<sizeof(T)...>::value == sizeof(std::tuple<T...>)>
 {
+    explicit is_uniquely_represented() = default;
 };
 
 // is_uniquely_represented<T[N]>
@@ -141,6 +152,7 @@ template <class T, std::size_t N>
 struct is_uniquely_represented<T[N]>
     : public is_uniquely_represented<T>
 {
+    explicit is_uniquely_represented() = default;
 };
 
 // is_uniquely_represented<std::array<T, N>>
@@ -150,6 +162,7 @@ struct is_uniquely_represented<std::array<T, N>>
     : public std::integral_constant<bool, is_uniquely_represented<T>::value &&
                                           sizeof(T)*N == sizeof(std::array<T, N>)>
 {
+    explicit is_uniquely_represented() = default;
 };
 
 /** Metafunction returning `true` if the type can be hashed in one call.
@@ -171,14 +184,18 @@ struct is_contiguously_hashable
     : public std::integral_constant<bool, is_uniquely_represented<T>::value &&
                                       (sizeof(T) == 1 ||
                                        HashAlgorithm::endian == endian::native)>
-{};
+{
+    explicit is_contiguously_hashable() = default;
+};
 
 template <class T, std::size_t N, class HashAlgorithm>
 struct is_contiguously_hashable<T[N], HashAlgorithm>
     : public std::integral_constant<bool, is_uniquely_represented<T[N]>::value &&
                                       (sizeof(T) == 1 ||
                                        HashAlgorithm::endian == endian::native)>
-{};
+{
+    explicit is_contiguously_hashable() = default;
+};
 /** @} */
 
 //------------------------------------------------------------------------------
@@ -324,6 +341,18 @@ template <class Hasher, class Key, class Hash, class Pred, class Alloc>
 void
 hash_append(Hasher& h, std::unordered_set<Key, Hash, Pred, Alloc> const& s);
 
+template <class Hasher, class Key, class Compare, class Alloc>
+std::enable_if_t
+<
+    !is_contiguously_hashable<Key, Hasher>::value
+>
+hash_append(Hasher& h, boost::container::flat_set<Key, Compare, Alloc> const& v) noexcept;
+template <class Hasher, class Key, class Compare, class Alloc>
+std::enable_if_t
+<
+    is_contiguously_hashable<Key, Hasher>::value
+>
+hash_append(Hasher& h, boost::container::flat_set<Key, Compare, Alloc> const& v) noexcept;
 template <class Hasher, class T0, class T1, class ...T>
 void
 hash_append (Hasher& h, T0 const& t0, T1 const& t1, T const& ...t) noexcept;
@@ -421,6 +450,25 @@ hash_append(Hasher& h, std::array<T, N> const& a) noexcept
         hash_append(h, t);
 }
 
+template <class Hasher, class Key, class Compare, class Alloc>
+std::enable_if_t
+<
+    !is_contiguously_hashable<Key, Hasher>::value
+>
+hash_append(Hasher& h, boost::container::flat_set<Key, Compare, Alloc> const& v) noexcept
+{
+    for (auto const& t : v)
+        hash_append(h, t);
+}
+template <class Hasher, class Key, class Compare, class Alloc>
+std::enable_if_t
+<
+    is_contiguously_hashable<Key, Hasher>::value
+>
+hash_append(Hasher& h, boost::container::flat_set<Key, Compare, Alloc> const& v) noexcept
+{
+    h(&(v.begin()), v.size()*sizeof(Key));
+}
 // tuple
 
 namespace detail

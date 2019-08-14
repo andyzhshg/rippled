@@ -17,10 +17,8 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/basics/contract.h>
 #include <ripple/shamap/SHAMap.h>
-#include <ripple/beast/unit_test.h>
 
 namespace ripple {
 
@@ -72,7 +70,9 @@ SHAMap::snapShot (bool isMutable) const
         newMap.state_ = SHAMapState::Immutable;
 
     newMap.seq_ = seq_ + 1;
+    newMap.ledgerSeq_ = ledgerSeq_;
     newMap.root_ = root_;
+    newMap.backed_ = backed_;
 
     if ((state_ != SHAMapState::Immutable) || !isMutable)
     {
@@ -191,13 +191,13 @@ SHAMap::walkTowardsKey(uint256 const& id, SharedPtrNodeStack* stack) const
         if (stack != nullptr)
             stack->push({inNode, nodeID});
 
-        auto const inner = std::static_pointer_cast<SHAMapInnerNode>(std::move(inNode));
         if (isv2)
         {
             auto n = std::static_pointer_cast<SHAMapInnerNodeV2>(inNode);
             if (!n->has_common_prefix(id))
                 return nullptr;
         }
+        auto const inner = std::static_pointer_cast<SHAMapInnerNode>(inNode);
         auto const branch = nodeID.selectBranch (id);
         if (inner->isEmptyBranch (branch))
             return nullptr;
@@ -247,8 +247,7 @@ SHAMap::fetchNodeFromDB (SHAMapHash const& hash) const
 
     if (backed_)
     {
-        std::shared_ptr<NodeObject> obj = f_.db().fetch (hash.as_uint256());
-        if (obj)
+        if (auto obj = f_.db().fetch(hash.as_uint256(), ledgerSeq_))
         {
             try
             {
@@ -261,11 +260,6 @@ SHAMap::fetchNodeFromDB (SHAMapHash const& hash) const
                     {
                         auto root =  std::dynamic_pointer_cast<SHAMapInnerNode>(root_);
                         assert(root);
-if (!root->isEmpty())
-{
-    std::cerr << "isv2 = " << isv2 << '\n';
-    std::cerr << "is_v2() = " << is_v2() << '\n';
-}
                         assert(root->isEmpty());
                         if (isv2)
                         {
@@ -289,10 +283,10 @@ if (!root->isEmpty())
                 return std::shared_ptr<SHAMapTreeNode> ();
             }
         }
-        else if (ledgerSeq_ != 0)
+        else if (full_)
         {
             f_.missing_node(ledgerSeq_);
-            const_cast<std::uint32_t&>(ledgerSeq_) = 0;
+            const_cast<bool&>(full_) = false;
         }
     }
 
@@ -305,15 +299,14 @@ SHAMap::checkFilter(SHAMapHash const& hash,
                     SHAMapSyncFilter* filter) const
 {
     std::shared_ptr<SHAMapAbstractNode> node;
-    Blob nodeData;
-    if (filter->haveNode (hash, nodeData))
+    if (auto nodeData = filter->getNode (hash))
     {
         node = SHAMapAbstractNode::make(
-            makeSlice(nodeData), 0, snfPREFIX, hash, true, f_.journal ());
+            makeSlice(*nodeData), 0, snfPREFIX, hash, true, f_.journal ());
         if (node)
         {
-            filter->gotNode (true, hash,
-                std::move(nodeData), node->getType ());
+            filter->gotNode (true, hash, ledgerSeq_,
+                std::move(*nodeData), node->getType ());
             if (backed_)
                 canonicalize (hash, node);
         }
@@ -488,7 +481,7 @@ SHAMap::descendAsync (SHAMapInnerNode* parent, int branch,
         if (!ptr && backed_)
         {
             std::shared_ptr<NodeObject> obj;
-            if (! f_.db().asyncFetch (hash.as_uint256(), obj))
+            if (! f_.db().asyncFetch (hash.as_uint256(), ledgerSeq_, obj))
             {
                 pending = true;
                 return nullptr;
@@ -1123,8 +1116,8 @@ SHAMap::writeNode (
 
     Serializer s;
     node->addRaw (s, snfPREFIX);
-    f_.db().store (t,
-        std::move (s.modData ()), node->getNodeHash ().as_uint256());
+    f_.db().store (t, std::move (s.modData ()),
+        node->getNodeHash ().as_uint256(), ledgerSeq_);
     return node;
 }
 

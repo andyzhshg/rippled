@@ -17,10 +17,12 @@
 */
 //==============================================================================
 
+#include <ripple/beast/core/SemanticVersion.h>
 #include <ripple/beast/core/LexicalCast.h>
 
 #include <algorithm>
 #include <cassert>
+#include <locale>
 
 namespace beast {
 
@@ -157,7 +159,7 @@ SemanticVersion::SemanticVersion (std::string const& version)
         throw std::invalid_argument ("invalid version string");
 }
 
-bool SemanticVersion::parse (std::string const& input, bool debug)
+bool SemanticVersion::parse (std::string const& input)
 {
     // May not have leading or trailing whitespace
     auto left_iter = std::find_if_not (input.begin (), input.end (),

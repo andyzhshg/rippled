@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/basics/Log.h>
 #include <ripple/app/tx/apply.h>
 #include <ripple/app/tx/applySteps.h>
@@ -40,8 +39,7 @@ checkValidity(HashRouter& router,
         Config const& config)
 {
     auto const allowMultiSign =
-        rules.enabled(featureMultiSign,
-            config.features);
+        rules.enabled(featureMultiSign);
 
     auto const id = tx.getTransactionID();
     auto const flags = router.getFlags(id);
@@ -125,16 +123,12 @@ applyTransaction (Application& app, OpenView& view,
     if (retryAssured)
         flags = flags | tapRETRY;
 
-    JLOG (j.debug()) << "TXN "
-        << txn.getTransactionID ()
-        //<< (engine.view().open() ? " open" : " closed")
-        // because of the optional in engine
+    JLOG (j.debug()) << "TXN " << txn.getTransactionID ()
         << (retryAssured ? "/retry" : "/final");
 
     try
     {
-        auto const result = apply(app,
-            view, txn, flags, j);
+        auto const result = apply(app, view, txn, flags, j);
         if (result.second)
         {
             JLOG (j.debug())

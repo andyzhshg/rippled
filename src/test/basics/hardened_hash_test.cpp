@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/basics/hardened_hash.h>
 #include <ripple/beast/unit_test.h>
 #include <boost/functional/hash.hpp>
@@ -170,8 +169,10 @@ public:
 
 using sha256_t = unsigned_integer <256, std::size_t>;
 
+#ifndef __INTELLISENSE__
 static_assert (sha256_t::bits == 256,
     "sha256_t must have 256 bits");
+#endif
 
 } // ripple
 
@@ -253,7 +254,7 @@ public:
     }
 
     void
-    run ()
+    run () override
     {
         test_user_types();
         test_containers();

@@ -17,17 +17,18 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/shamap/SHAMap.h>
-#include <ripple/shamap/tests/common.h>
 #include <ripple/basics/Blob.h>
 #include <ripple/basics/StringUtilities.h>
 #include <ripple/beast/unit_test.h>
 #include <ripple/beast/utility/Journal.h>
+#include <test/shamap/common.h>
+#include <test/unit_test/SuiteJournal.h>
 
 namespace ripple {
 namespace tests {
 
+#ifndef __INTELLISENSE__
 static_assert( std::is_nothrow_destructible <SHAMap>{}, "");
 static_assert(!std::is_default_constructible<SHAMap>{}, "");
 static_assert(!std::is_copy_constructible   <SHAMap>{}, "");
@@ -97,6 +98,7 @@ static_assert(!std::is_copy_constructible   <SHAMapTreeNode>{}, "");
 static_assert(!std::is_copy_assignable      <SHAMapTreeNode>{}, "");
 static_assert(!std::is_move_constructible   <SHAMapTreeNode>{}, "");
 static_assert(!std::is_move_assignable      <SHAMapTreeNode>{}, "");
+#endif
 
 inline bool operator== (SHAMapItem const& a, SHAMapItem const& b) { return a.key() == b.key(); }
 inline bool operator!= (SHAMapItem const& a, SHAMapItem const& b) { return a.key() != b.key(); }
@@ -116,23 +118,25 @@ public:
         return vuc;
     }
 
-    void run ()
+    void run () override
     {
-        run (true,  SHAMap::version{1});
-        run (false, SHAMap::version{1});
-        run (true,  SHAMap::version{2});
-        run (false, SHAMap::version{2});
+        using namespace beast::severities;
+        test::SuiteJournal journal ("SHAMap_test", *this);
+
+        run (true,  SHAMap::version{1}, journal);
+        run (false, SHAMap::version{1}, journal);
+        run (true,  SHAMap::version{2}, journal);
+        run (false, SHAMap::version{2}, journal);
     }
 
-    void run (bool backed, SHAMap::version v)
+    void run (bool backed, SHAMap::version v, beast::Journal const& journal)
     {
         if (backed)
             testcase ("add/traverse backed");
         else
             testcase ("add/traverse unbacked");
 
-        beast::Journal const j;                            // debug journal
-        tests::TestFamily f(j);
+        tests::TestFamily f(journal);
 
         // h3 and h4 differ only in the leaf, same terminal node (level 19)
         uint256 h1, h2, h3, h4, h5;
@@ -249,7 +253,7 @@ public:
             if (! backed)
                 map.setUnbacked ();
 
-            BEAST_EXPECT(map.getHash() == zero);
+            BEAST_EXPECT(map.getHash() == beast::zero);
             for (int k = 0; k < keys.size(); ++k)
             {
                 SHAMapItem item (keys[k], IntToVUC (k));
@@ -281,7 +285,7 @@ public:
                 BEAST_EXPECT(map.delItem (keys[k]));
                 map.invariants();
             }
-            BEAST_EXPECT(map.getHash() == zero);
+            BEAST_EXPECT(map.getHash() == beast::zero);
         }
 
         if (backed)
@@ -300,7 +304,7 @@ public:
             keys[6].SetHex ("b91891fe4ef6cee585fdc6fda1e09eb4d386363158ec3321b8123e5a772c6ca8");
             keys[7].SetHex ("292891fe4ef6cee585fdc6fda1e09eb4d386363158ec3321b8123e5a772c6ca8");
 
-            tests::TestFamily tf{beast::Journal{}};
+            tests::TestFamily tf{journal};
             SHAMap map{SHAMapType::FREE, tf, v};
             if (! backed)
                 map.setUnbacked ();

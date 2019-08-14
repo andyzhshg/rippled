@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/protocol/Quality.h>
 #include <ripple/beast/unit_test.h>
 #include <type_traits>
@@ -234,8 +233,30 @@ public:
                 raw (4131113916555555, -16));       // .4131113916555555
             Amounts const result (
                 q.ceil_out (value, limit));
-            BEAST_EXPECT(result.in != zero);
+            BEAST_EXPECT(result.in != beast::zero);
         }
+    }
+
+    void
+    test_round()
+    {
+        testcase ("round");
+
+        Quality q (0x59148191fb913522ull);      // 57719.63525051682
+        BEAST_EXPECT(q.round(3).rate().getText() == "57800");
+        BEAST_EXPECT(q.round(4).rate().getText() == "57720");
+        BEAST_EXPECT(q.round(5).rate().getText() == "57720");
+        BEAST_EXPECT(q.round(6).rate().getText() == "57719.7");
+        BEAST_EXPECT(q.round(7).rate().getText() == "57719.64");
+        BEAST_EXPECT(q.round(8).rate().getText() == "57719.636");
+        BEAST_EXPECT(q.round(9).rate().getText() == "57719.6353");
+        BEAST_EXPECT(q.round(10).rate().getText() == "57719.63526");
+        BEAST_EXPECT(q.round(11).rate().getText() == "57719.635251");
+        BEAST_EXPECT(q.round(12).rate().getText() == "57719.6352506");
+        BEAST_EXPECT(q.round(13).rate().getText() == "57719.63525052");
+        BEAST_EXPECT(q.round(14).rate().getText() == "57719.635250517");
+        BEAST_EXPECT(q.round(15).rate().getText() == "57719.6352505169");
+        BEAST_EXPECT(q.round(16).rate().getText() == "57719.63525051682");
     }
 
     void
@@ -258,6 +279,20 @@ public:
         BEAST_EXPECT(q12 < q13);
         BEAST_EXPECT(q31 < q21);
         BEAST_EXPECT(q21 < q11);
+        BEAST_EXPECT(q11 >= q11);
+        BEAST_EXPECT(q12 >= q11);
+        BEAST_EXPECT(q13 >= q12);
+        BEAST_EXPECT(q21 >= q31);
+        BEAST_EXPECT(q11 >= q21);
+        BEAST_EXPECT(q12 > q11);
+        BEAST_EXPECT(q13 > q12);
+        BEAST_EXPECT(q21 > q31);
+        BEAST_EXPECT(q11 > q21);
+        BEAST_EXPECT(q11 <= q11);
+        BEAST_EXPECT(q11 <= q12);
+        BEAST_EXPECT(q12 <= q13);
+        BEAST_EXPECT(q31 <= q21);
+        BEAST_EXPECT(q21 <= q11);
         BEAST_EXPECT(q31 != q21);
     }
 
@@ -312,7 +347,7 @@ public:
         BEAST_EXPECT(qa < qb);
     }
     void
-    run()
+    run() override
     {
         test_comparisons ();
         test_composition ();
@@ -320,6 +355,7 @@ public:
         test_ceil_in ();
         test_ceil_out ();
         test_raw ();
+        test_round ();
     }
 };
 

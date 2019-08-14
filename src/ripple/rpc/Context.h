@@ -21,7 +21,7 @@
 #define RIPPLE_RPC_CONTEXT_H_INCLUDED
 
 #include <ripple/core/Config.h>
-#include <ripple/core/JobCoro.h>
+#include <ripple/core/JobQueue.h>
 #include <ripple/net/InfoSub.h>
 #include <ripple/rpc/Role.h>
 
@@ -43,8 +43,8 @@ struct Context
      */
     struct Headers
     {
-        std::string user;
-        std::string forwardedFor;
+        boost::string_view user;
+        boost::string_view forwardedFor;
     };
 
     beast::Journal j;
@@ -55,7 +55,7 @@ struct Context
     LedgerMaster& ledgerMaster;
     Resource::Consumer& consumer;
     Role role;
-    std::shared_ptr<JobCoro> jobCoro;
+    std::shared_ptr<JobQueue::Coro> coro;
     InfoSub::pointer infoSub;
     Headers headers;
 };

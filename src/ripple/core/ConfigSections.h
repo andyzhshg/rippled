@@ -27,7 +27,10 @@ namespace ripple {
 // VFALCO DEPRECATED in favor of the BasicConfig interface
 struct ConfigSection
 {
+    explicit ConfigSection() = default;
+
     static std::string nodeDatabase ()       { return "node_db"; }
+    static std::string shardDatabase ()      { return "shard_db"; }
     static std::string importNodeDatabase () { return "import_db"; }
 };
 
@@ -55,18 +58,22 @@ struct ConfigSection
 #define SECTION_PEER_PRIVATE            "peer_private"
 #define SECTION_PEERS_MAX               "peers_max"
 #define SECTION_RPC_STARTUP             "rpc_startup"
+#define SECTION_SIGNING_SUPPORT         "signing_support"
 #define SECTION_SNTP                    "sntp_servers"
 #define SECTION_SSL_VERIFY              "ssl_verify"
 #define SECTION_SSL_VERIFY_FILE         "ssl_verify_file"
 #define SECTION_SSL_VERIFY_DIR          "ssl_verify_dir"
 #define SECTION_VALIDATORS_FILE         "validators_file"
-#define SECTION_VALIDATION_QUORUM       "validation_quorum"
 #define SECTION_VALIDATION_SEED         "validation_seed"
 #define SECTION_WEBSOCKET_PING_FREQ     "websocket_ping_frequency"
-#define SECTION_VALIDATORS              "validators"
 #define SECTION_VALIDATOR_KEYS          "validator_keys"
-#define SECTION_VALIDATION_MANIFEST     "validation_manifest"
+#define SECTION_VALIDATOR_KEY_REVOCATION "validator_key_revocation"
+#define SECTION_VALIDATOR_LIST_KEYS     "validator_list_keys"
+#define SECTION_VALIDATOR_LIST_SITES    "validator_list_sites"
+#define SECTION_VALIDATORS              "validators"
+#define SECTION_VALIDATOR_TOKEN         "validator_token"
 #define SECTION_VETO_AMENDMENTS         "veto_amendments"
+#define SECTION_WORKERS                 "workers"
 
 } // ripple
 

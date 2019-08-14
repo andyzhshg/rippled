@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/app/paths/Tuning.h>
 #include <ripple/app/paths/Pathfinder.h>
@@ -171,13 +170,9 @@ Pathfinder::Pathfinder (
     assert (! uSrcIssuer || isXRP(uSrcCurrency) == isXRP(uSrcIssuer.get()));
 }
 
-Pathfinder::~Pathfinder()
-{
-}
-
 bool Pathfinder::findPaths (int searchLevel)
 {
-    if (mDstAmount == zero)
+    if (mDstAmount == beast::zero)
     {
         // No need to send zero money.
         JLOG (j_.debug()) << "Destination amount was zero.";
@@ -205,7 +200,7 @@ bool Pathfinder::findPaths (int searchLevel)
         return true;
     }
 
-    m_loadEvent = app_.getJobQueue ().getLoadEvent (
+    m_loadEvent = app_.getJobQueue ().makeLoadEvent (
         jtPATH_FIND, "FindPath");
     auto currencyIsXRP = isXRP (mSrcCurrency);
 
@@ -355,7 +350,6 @@ TER Pathfinder::getPathLiquidity (
             mSrcAccount,
             pathSet,
             app_.logs(),
-            app_.config(),
             &rcInput);
         // If we can't get even the minimum liquidity requested, we're done.
         if (rc.result () != tesSUCCESS)
@@ -376,7 +370,6 @@ TER Pathfinder::getPathLiquidity (
                 mSrcAccount,
                 pathSet,
                 app_.logs (),
-                app_.config (),
                 &rcInput);
 
             // If we found further liquidity, add it into the result.
@@ -390,7 +383,7 @@ TER Pathfinder::getPathLiquidity (
     {
         JLOG (j_.info()) <<
             "checkpath: exception (" << e.what() << ") " <<
-            path.getJson (0);
+            path.getJson (JsonOptions::none);
         return tefEXCEPTION;
     }
 }
@@ -428,7 +421,6 @@ void Pathfinder::computePathRanks (int maxPaths)
             mSrcAccount,
             STPathSet(),
             app_.logs (),
-            app_.config (),
             &rcInput);
 
         if (rc.result () == tesSUCCESS)
@@ -520,13 +512,13 @@ void Pathfinder::rankPaths (
                 JLOG (j_.debug()) <<
                     "findPaths: dropping : " <<
                     transToken (resultCode) <<
-                    ": " << currentPath.getJson (0);
+                    ": " << currentPath.getJson (JsonOptions::none);
             }
             else
             {
                 JLOG (j_.debug()) <<
                     "findPaths: quality: " << uQuality <<
-                    ": " << currentPath.getJson (0);
+                    ": " << currentPath.getJson (JsonOptions::none);
 
                 rankedPaths.push_back ({uQuality,
                     currentPath.size (), liquidity, i});
@@ -664,16 +656,18 @@ Pathfinder::getBestPaths (
             // We found an extra path that can move the whole amount.
             fullLiquidityPath = (startsWithIssuer ? removeIssuer (path) : path);
             JLOG (j_.debug()) <<
-                "Found extra full path: " << fullLiquidityPath.getJson (0);
+                "Found extra full path: " <<
+                fullLiquidityPath.getJson (JsonOptions::none);
         }
         else
         {
             JLOG (j_.debug()) <<
-                "Skipping a non-filling path: " << path.getJson (0);
+                "Skipping a non-filling path: " <<
+                path.getJson (JsonOptions::none);
         }
     }
 
-    if (remaining > zero)
+    if (remaining > beast::zero)
     {
         assert (fullLiquidityPath.empty ());
         JLOG (j_.info()) <<
@@ -682,7 +676,8 @@ Pathfinder::getBestPaths (
     else
     {
         JLOG (j_.debug()) <<
-            "findPaths: RESULTS: " << bestPaths.getJson (0);
+            "findPaths: RESULTS: " <<
+            bestPaths.getJson (JsonOptions::none);
     }
     return bestPaths;
 }
@@ -734,7 +729,7 @@ int Pathfinder::getPathsOut (
             if (currency != rspEntry->getLimit ().getCurrency ())
             {
             }
-            else if (rspEntry->getBalance () <= zero &&
+            else if (rspEntry->getBalance () <= beast::zero &&
                      (!rspEntry->getLimitPeer ()
                       || -rspEntry->getBalance () >= rspEntry->getLimitPeer ()
                       ||  (bAuthRequired && !rspEntry->getAuth ())))
@@ -914,7 +909,7 @@ void Pathfinder::addLink (
 
     JLOG (j_.trace()) << "addLink< flags="
                                    << addFlags << " onXRP=" << bOnXRP;
-    JLOG (j_.trace()) << currentPath.getJson (0);
+    JLOG (j_.trace()) << currentPath.getJson (JsonOptions::none);
 
     if (addFlags & afADD_ACCOUNTS)
     {
@@ -924,7 +919,8 @@ void Pathfinder::addLink (
             if (mDstAmount.native () && !currentPath.empty ())
             { // non-default path to XRP destination
                 JLOG (j_.trace())
-                    << "complete path found ax: " << currentPath.getJson(0);
+                    << "complete path found ax: "
+                    << currentPath.getJson(JsonOptions::none);
                 addUniquePath (mCompletePaths, currentPath);
             }
         }
@@ -977,7 +973,7 @@ void Pathfinder::addLink (
                         !currentPath.hasSeen (acct, uEndCurrency, acct))
                     {
                         // path is for correct currency and has not been seen
-                        if (rs->getBalance () <= zero
+                        if (rs->getBalance () <= beast::zero
                             && (!rs->getLimitPeer ()
                                 || -rs->getBalance () >= rs->getLimitPeer ()
                                 || (bRequireAuth && !rs->getAuth ())))
@@ -998,7 +994,7 @@ void Pathfinder::addLink (
                                 {
                                     JLOG (j_.trace())
                                             << "complete path found ae: "
-                                            << currentPath.getJson (0);
+                                            << currentPath.getJson (JsonOptions::none);
                                     addUniquePath
                                             (mCompletePaths, currentPath);
                                 }
@@ -1118,7 +1114,7 @@ void Pathfinder::addLink (
                             // complete
                             JLOG (j_.trace())
                                 << "complete path found bx: "
-                                << currentPath.getJson(0);
+                                << currentPath.getJson(JsonOptions::none);
                             addUniquePath (mCompletePaths, newPath);
                         }
                         else
@@ -1161,7 +1157,7 @@ void Pathfinder::addLink (
                         { // with the destination account, this path is complete
                             JLOG (j_.trace())
                                 << "complete path found ba: "
-                                << currentPath.getJson(0);
+                                << currentPath.getJson(JsonOptions::none);
                             addUniquePath (mCompletePaths, newPath);
                         }
                         else

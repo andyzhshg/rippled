@@ -44,9 +44,6 @@ public:
 
     const_iterator
     end() const;
-
-    const_iterator
-    find(uint256 const& page_key, uint256 const& sle_key) const;
 };
 
 class Dir::const_iterator
@@ -62,8 +59,6 @@ public:
         std::ptrdiff_t;
     using iterator_category =
         std::forward_iterator_tag;
-
-    const_iterator() = default;
 
     bool
     operator==(const_iterator const& other) const;

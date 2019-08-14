@@ -23,8 +23,8 @@
 #include <ripple/server/impl/BaseHTTPPeer.h>
 #include <ripple/server/WSSession.h>
 #include <ripple/beast/asio/ssl_bundle.h>
-#include <beast/core/placeholders.hpp>
-#include <beast/websocket/ssl.hpp>
+#include <ripple/beast/asio/waitable_timer.h>
+#include <boost/beast/websocket/ssl.hpp>
 #include <memory>
 
 namespace ripple {
@@ -34,7 +34,6 @@ class SSLWSPeer
     : public BaseWSPeer<Handler, SSLWSPeer<Handler>>
     , public std::enable_shared_from_this<SSLWSPeer<Handler>>
 {
-private:
     friend class BasePeer<Handler, SSLWSPeer>;
     friend class BaseWSPeer<Handler, SSLWSPeer>;
 
@@ -45,7 +44,7 @@ private:
         boost::asio::basic_waitable_timer <clock_type>;
 
     std::unique_ptr<beast::asio::ssl_bundle> ssl_bundle_;
-    beast::websocket::stream<
+    boost::beast::websocket::stream<
         beast::asio::ssl_bundle::stream_type&> ws_;
 
 public:
@@ -54,59 +53,34 @@ public:
         Port const& port,
         Handler& handler,
         endpoint_type remote_endpoint,
-        beast::http::request_v1<Body, Headers>&& request,
+        boost::beast::http::request<Body, Headers>&& request,
         std::unique_ptr<
             beast::asio::ssl_bundle>&& ssl_bundle,
         beast::Journal journal);
-
-private:
-    void
-    do_close() override;
-
-    void
-    on_shutdown(error_code ec);
 };
 
 //------------------------------------------------------------------------------
 
-template<class Handler>
-template<class Body, class Headers>
-SSLWSPeer<Handler>::
-SSLWSPeer(
+template <class Handler>
+template <class Body, class Headers>
+SSLWSPeer<Handler>::SSLWSPeer(
     Port const& port,
     Handler& handler,
     endpoint_type remote_endpoint,
-    beast::http::request_v1<Body, Headers>&& request,
-    std::unique_ptr<
-        beast::asio::ssl_bundle>&& ssl_bundle,
+    boost::beast::http::request<Body, Headers>&& request,
+    std::unique_ptr<beast::asio::ssl_bundle>&& ssl_bundle,
     beast::Journal journal)
-    : BaseWSPeer<Handler, SSLWSPeer>(port, handler,
-        remote_endpoint, std::move(request),
-            ssl_bundle->socket.get_io_service(), journal)
+    : BaseWSPeer<Handler, SSLWSPeer>(
+          port,
+          handler,
+          ssl_bundle->socket.get_executor(),
+          beast::create_waitable_timer<waitable_timer>(ssl_bundle->socket),
+          remote_endpoint,
+          std::move(request),
+          journal)
     , ssl_bundle_(std::move(ssl_bundle))
     , ws_(ssl_bundle_->stream)
 {
-}
-
-template<class Handler>
-void
-SSLWSPeer<Handler>::
-do_close()
-{
-    //start_timer();
-    using namespace beast::asio;
-    ws_.next_layer().async_shutdown(
-        this->strand_.wrap(std::bind(&SSLWSPeer::on_shutdown,
-            this->shared_from_this(), placeholders::error)));
-}
-
-template<class Handler>
-void
-SSLWSPeer<Handler>::
-on_shutdown(error_code ec)
-{
-    //cancel_timer();
-    ws_.lowest_layer().close(ec);
 }
 
 } // ripple

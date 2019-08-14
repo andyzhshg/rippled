@@ -86,10 +86,6 @@ lookupLedger (std::shared_ptr<ReadView const>&, Context&, Json::Value& result);
 hash_set <AccountID>
 parseAccountIds(Json::Value const& jvArray);
 
-void
-addPaymentDeliveredAmount(Json::Value&, Context&,
-    std::shared_ptr<Transaction>, TxMeta::pointer);
-
 /** Inject JSON describing ledger entry
 
     Effects:
@@ -112,6 +108,9 @@ readLimitField(unsigned int& limit, Tuning::LimitRange const&, Context const&);
 boost::optional<Seed>
 getSeedFromRPC(Json::Value const& params, Json::Value& error);
 
+boost::optional<Seed>
+parseRippleLibSeed(Json::Value const& params);
+
 std::pair<PublicKey, SecretKey>
 keypairForSignature(Json::Value const& params, Json::Value& error);
 
@@ -128,6 +127,9 @@ setVersion(Object& parent)
     object[jss::good] = goodVersion.print();
     object[jss::last] = lastVersion.print();
 }
+
+std::pair<RPC::Status, LedgerEntryType>
+    chooseLedgerEntryType(Json::Value const& params);
 
 } // RPC
 } // ripple

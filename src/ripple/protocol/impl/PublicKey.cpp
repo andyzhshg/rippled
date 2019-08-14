@@ -17,34 +17,33 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/protocol/PublicKey.h>
 #include <ripple/protocol/digest.h>
 #include <ripple/protocol/impl/secp256k1.h>
 #include <ripple/basics/contract.h>
-#include <ripple/beast/core/ByteOrder.h>
+#include <ripple/basics/strHex.h>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <ed25519-donna/ed25519.h>
 #include <type_traits>
 
 namespace ripple {
 
-using uint264 = boost::multiprecision::number<
-    boost::multiprecision::cpp_int_backend<
-        264, 264, boost::multiprecision::signed_magnitude,
-            boost::multiprecision::unchecked, void>>;
+std::ostream&
+operator<<(std::ostream& os, PublicKey const& pk)
+{
+    os << strHex(pk);
+    return os;
+}
 
 template<>
 boost::optional<PublicKey>
 parseBase58 (TokenType type, std::string const& s)
 {
-    auto const result =
-        decodeBase58Token(s, type);
-    if (result.empty())
+    auto const result = decodeBase58Token(s, type);
+    auto const pks = makeSlice(result);
+    if (!publicKeyType(pks))
         return boost::none;
-    if (result.size() != 33)
-        return boost::none;
-    return PublicKey(makeSlice(result));
+    return PublicKey(pks);
 }
 
 //------------------------------------------------------------------------------
@@ -73,8 +72,7 @@ sigPart (Slice& buf)
         if ((buf[1] & 0x80) == 0)
             return boost::none;
     }
-    boost::optional<Slice> number =
-        Slice(buf.data(), len);
+    boost::optional<Slice> number = Slice(buf.data(), len);
     buf += len;
     return number;
 }
@@ -117,6 +115,11 @@ sliceToHex (Slice const& slice)
 boost::optional<ECDSACanonicality>
 ecdsaCanonicality (Slice const& sig)
 {
+    using uint264 = boost::multiprecision::number<
+        boost::multiprecision::cpp_int_backend<
+            264, 264, boost::multiprecision::signed_magnitude,
+            boost::multiprecision::unchecked, void>>;
+
     static uint264 const G(
         "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141");
 
@@ -133,12 +136,13 @@ ecdsaCanonicality (Slice const& sig)
         return boost::none;
 
     uint264 R(sliceToHex(*r));
-    uint264 S(sliceToHex(*s));
-
     if (R >= G)
         return boost::none;
+
+    uint264 S(sliceToHex(*s));
     if (S >= G)
         return boost::none;
+
     // (R,S) and (R,G-S) are canonical,
     // but is fully canonical when S <= G-S
     auto const Sp = G - S;
@@ -178,21 +182,22 @@ PublicKey::PublicKey (Slice const& slice)
     if(! publicKeyType(slice))
         LogicError("PublicKey::PublicKey invalid type");
     size_ = slice.size();
-    std::memcpy(buf_, slice.data(), slice.size());
+    std::memcpy(buf_, slice.data(), size_);
 }
 
 PublicKey::PublicKey (PublicKey const& other)
     : size_ (other.size_)
 {
-    std::memcpy(buf_, other.buf_, size_);
+    if (size_)
+        std::memcpy(buf_, other.buf_, size_);
 };
 
 PublicKey&
-PublicKey::operator=(
-    PublicKey const& other)
+PublicKey::operator=(PublicKey const& other)
 {
     size_ = other.size_;
-    std::memcpy(buf_, other.buf_, size_);
+    if (size_)
+        std::memcpy(buf_, other.buf_, size_);
     return *this;
 }
 
@@ -201,13 +206,15 @@ PublicKey::operator=(
 boost::optional<KeyType>
 publicKeyType (Slice const& slice)
 {
-    if (slice.size() == 33 &&
-            slice[0] == 0xED)
-        return KeyType::ed25519;
-    if (slice.size() == 33 &&
-        (slice[0] == 0x02 ||
-            slice[0] == 0x03))
-        return KeyType::secp256k1;
+    if (slice.size() == 33)
+    {
+        if (slice[0] == 0xED)
+            return KeyType::ed25519;
+
+        if (slice[0] == 0x02 || slice[0] == 0x03)
+            return KeyType::secp256k1;
+    }
+
     return boost::none;
 }
 
@@ -219,17 +226,51 @@ verifyDigest (PublicKey const& publicKey,
 {
     if (publicKeyType(publicKey) != KeyType::secp256k1)
         LogicError("sign: secp256k1 required for digest signing");
-
     auto const canonicality = ecdsaCanonicality(sig);
     if (! canonicality)
         return false;
     if (mustBeFullyCanonical &&
         (*canonicality != ECDSACanonicality::fullyCanonical))
         return false;
+
+    secp256k1_pubkey pubkey_imp;
+    if(secp256k1_ec_pubkey_parse(
+            secp256k1Context(),
+            &pubkey_imp,
+            reinterpret_cast<unsigned char const*>(
+                publicKey.data()),
+            publicKey.size()) != 1)
+        return false;
+
+    secp256k1_ecdsa_signature sig_imp;
+    if(secp256k1_ecdsa_signature_parse_der(
+            secp256k1Context(),
+            &sig_imp,
+            reinterpret_cast<unsigned char const*>(
+                sig.data()),
+            sig.size()) != 1)
+        return false;
+    if (*canonicality != ECDSACanonicality::fullyCanonical)
+    {
+        secp256k1_ecdsa_signature sig_norm;
+        if(secp256k1_ecdsa_signature_normalize(
+                secp256k1Context(),
+                &sig_norm,
+                &sig_imp) != 1)
+            return false;
+        return secp256k1_ecdsa_verify(
+            secp256k1Context(),
+            &sig_norm,
+            reinterpret_cast<unsigned char const*>(
+                digest.data()),
+            &pubkey_imp) == 1;
+    }
     return secp256k1_ecdsa_verify(
-        secp256k1Context(), secpp(digest.data()),
-            secpp(sig.data()), sig.size(),
-                secpp(publicKey.data()), publicKey.size()) == 1;
+        secp256k1Context(),
+        &sig_imp,
+        reinterpret_cast<unsigned char const*>(
+            digest.data()),
+        &pubkey_imp) == 1;
 }
 
 bool

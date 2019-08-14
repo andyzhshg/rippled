@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013-2016 Vinnie Falco (vinnie dot falco at gmail dot com)
+// Copyright (c) 2013-2017 Vinnie Falco (vinnie dot falco at gmail dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -27,6 +27,7 @@ class suite_info
     std::string module_;
     std::string library_;
     bool manual_;
+    int priority_;
     run_type run_;
 
 public:
@@ -35,11 +36,13 @@ public:
             std::string module,
             std::string library,
             bool manual,
+            int priority,
             run_type run)
         : name_(std::move(name))
         , module_(std::move(module))
         , library_(std::move(library))
         , manual_(manual)
+        , priority_(priority)
         , run_(std::move(run))
     {
     }
@@ -80,16 +83,17 @@ public:
     void
     run(runner& r) const
     {
-        run_ (r);
+        run_(r);
     }
 
     friend
     bool
     operator<(suite_info const& lhs, suite_info const& rhs)
     {
-        return
-            std::tie(lhs.library_, lhs.module_, lhs.name_) <
-            std::tie(rhs.library_, rhs.module_, rhs.name_);
+        // we want higher priority suites sorted first, thus the negation
+        // of priority value here
+        return std::forward_as_tuple(-lhs.priority_, lhs.library_, lhs.module_, lhs.name_) <
+               std::forward_as_tuple(-rhs.priority_, rhs.library_, rhs.module_, rhs.name_);
     }
 };
 
@@ -102,13 +106,15 @@ make_suite_info(
     std::string name,
     std::string module,
     std::string library,
-    bool manual)
+    bool manual,
+    int priority)
 {
     return suite_info(
         std::move(name),
         std::move(module),
         std::move(library),
         manual,
+        priority,
         [](runner& r)
         {
             Suite{}(r);

@@ -17,20 +17,19 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/tx/impl/PayChan.h>
-
 #include <ripple/basics/chrono.h>
 #include <ripple/basics/Log.h>
+#include <ripple/ledger/ApplyView.h>
+#include <ripple/ledger/View.h>
 #include <ripple/protocol/digest.h>
-#include <ripple/protocol/st.h>
 #include <ripple/protocol/Feature.h>
 #include <ripple/protocol/Indexes.h>
 #include <ripple/protocol/PayChan.h>
 #include <ripple/protocol/PublicKey.h>
+#include <ripple/protocol/st.h>
 #include <ripple/protocol/TxFlags.h>
 #include <ripple/protocol/XRPAmount.h>
-#include <ripple/ledger/View.h>
 
 namespace ripple {
 
@@ -112,9 +111,9 @@ namespace ripple {
            The public key that made the signature (optional, required if a signature
            is present)
         Flags
-            tfCloseChannel
+            tfClose
                 Request that the channel be closed
-            tfRenewChannel
+            tfRenew
                 Request that the channel's expiration be reset. Only the owner
                 may renew a channel.
 
@@ -134,10 +133,10 @@ closeChannel (
     // Remove PayChan from owner directory
     {
         auto const page = (*slep)[sfOwnerNode];
-        TER const ter = dirDelete (view, true, page, keylet::ownerDir (src).key,
-            key, false, page == 0, j);
-        if (!isTesSuccess (ter))
-            return ter;
+        if (! view.dirRemove(keylet::ownerDir(src), page, key, true))
+        {
+            return tefBAD_LEDGER;
+        }
     }
 
     // Transfer amount back to owner, decrement owner count
@@ -145,7 +144,7 @@ closeChannel (
     assert ((*slep)[sfAmount] >= (*slep)[sfBalance]);
     (*sle)[sfBalance] =
         (*sle)[sfBalance] + (*slep)[sfAmount] - (*slep)[sfBalance];
-    (*sle)[sfOwnerCount] = (*sle)[sfOwnerCount] - 1;
+    adjustOwnerCount(view, sle, -1, j);
     view.update (sle);
 
     // Remove PayChan from ledger
@@ -155,11 +154,14 @@ closeChannel (
 
 //------------------------------------------------------------------------------
 
-TER
+NotTEC
 PayChanCreate::preflight (PreflightContext const& ctx)
 {
-    if (!ctx.rules.enabled (featurePayChan, ctx.app.config ().features))
+    if (!ctx.rules.enabled (featurePayChan))
         return temDISABLED;
+
+    if (ctx.rules.enabled(fix1543) && ctx.tx.getFlags() & tfUniversalMask)
+        return temINVALID_FLAG;
 
     auto const ret = preflight1 (ctx);
     if (!isTesSuccess (ret))
@@ -170,6 +172,9 @@ PayChanCreate::preflight (PreflightContext const& ctx)
 
     if (ctx.tx[sfAccount] == ctx.tx[sfDestination])
         return temDST_IS_SRC;
+
+    if (!publicKeyType(ctx.tx[sfPublicKey]))
+        return temMALFORMED;
 
     return preflight2 (ctx);
 }
@@ -203,7 +208,11 @@ PayChanCreate::preclaim(PreclaimContext const &ctx)
         if (((*sled)[sfFlags] & lsfRequireDestTag) &&
             !ctx.tx[~sfDestinationTag])
             return tecDST_TAG_NEEDED;
-        if ((*sled)[sfFlags] & lsfDisallowXRP)
+
+        // Obeying the lsfDisallowXRP flag was a bug.  Piggyback on
+        // featureDepositAuth to remove the bug.
+        if (!ctx.view.rules().enabled(featureDepositAuth) &&
+            ((*sled)[sfFlags] & lsfDisallowXRP))
             return tecNO_TARGET;
     }
 
@@ -236,18 +245,16 @@ PayChanCreate::doApply()
 
     // Add PayChan to owner directory
     {
-        uint64_t page;
-        auto result = dirAdd (ctx_.view (), page, keylet::ownerDir (account),
-            slep->key (), describeOwnerDir (account),
-            ctx_.app.journal ("View"));
-        if (!isTesSuccess (result.first))
-            return result.first;
-        (*slep)[sfOwnerNode] = page;
+        auto page = dirAdd (ctx_.view(), keylet::ownerDir(account), slep->key(),
+            false, describeOwnerDir (account), ctx_.app.journal ("View"));
+        if (!page)
+            return tecDIR_FULL;
+        (*slep)[sfOwnerNode] = *page;
     }
 
     // Deduct owner's balance, increment owner count
     (*sle)[sfBalance] = (*sle)[sfBalance] - ctx_.tx[sfAmount];
-    (*sle)[sfOwnerCount] = (*sle)[sfOwnerCount] + 1;
+    adjustOwnerCount(ctx_.view(), sle, 1, ctx_.journal);
     ctx_.view ().update (sle);
 
     return tesSUCCESS;
@@ -255,11 +262,14 @@ PayChanCreate::doApply()
 
 //------------------------------------------------------------------------------
 
-TER
+NotTEC
 PayChanFund::preflight (PreflightContext const& ctx)
 {
-    if (!ctx.rules.enabled (featurePayChan, ctx.app.config ().features))
+    if (!ctx.rules.enabled (featurePayChan))
         return temDISABLED;
+
+    if (ctx.rules.enabled(fix1543) && ctx.tx.getFlags() & tfUniversalMask)
+        return temINVALID_FLAG;
 
     auto const ret = preflight1 (ctx);
     if (!isTesSuccess (ret))
@@ -337,12 +347,17 @@ PayChanFund::doApply()
 
 //------------------------------------------------------------------------------
 
-TER
+NotTEC
 PayChanClaim::preflight (PreflightContext const& ctx)
 {
-    if (! ctx.rules.enabled(featurePayChan,
-            ctx.app.config().features))
+    if (! ctx.rules.enabled(featurePayChan))
         return temDISABLED;
+
+    // A search through historic MainNet ledgers by the data team found no
+    // occurrences of a transaction with the error that fix1512 fixed.  That
+    // means there are no old transactions with that error that we might
+    // need to replay.  So the check for fix1512 is removed.  Apr 2018.
+//  bool const noTecs = ctx.rules.enabled(fix1512);
 
     auto const ret = preflight1 (ctx);
     if (!isTesSuccess (ret))
@@ -357,11 +372,17 @@ PayChanClaim::preflight (PreflightContext const& ctx)
         return temBAD_AMOUNT;
 
     if (bal && amt && *bal > *amt)
-        return tecNO_PERMISSION;
+        return temBAD_AMOUNT;
 
-    auto const flags = ctx.tx.getFlags ();
-    if ((flags & tfClose) && (flags & tfRenew))
-        return temMALFORMED;
+    {
+        auto const flags = ctx.tx.getFlags();
+
+        if (ctx.rules.enabled(fix1543) && (flags & tfPayChanClaimMask))
+            return temINVALID_FLAG;
+
+        if ((flags & tfClose) && (flags & tfRenew))
+            return temMALFORMED;
+    }
 
     if (auto const sig = ctx.tx[~sfSignature])
     {
@@ -376,9 +397,11 @@ PayChanClaim::preflight (PreflightContext const& ctx)
         auto const authAmt = amt ? amt->xrp() : reqBalance;
 
         if (reqBalance > authAmt)
-            return tecNO_PERMISSION;
+            return temBAD_AMOUNT;
 
         Keylet const k (ltPAYCHAN, ctx.tx[sfPayChannel]);
+        if (!publicKeyType(ctx.tx[sfPublicKey]))
+            return temMALFORMED;
         PublicKey const pk (ctx.tx[sfPublicKey]);
         Serializer msg;
         serializePayChanAuthorization (msg, k.key, authAmt);
@@ -442,8 +465,26 @@ PayChanClaim::doApply()
         if (!sled)
             return terNO_ACCOUNT;
 
-        if (txAccount == src && ((*sled)[sfFlags] & lsfDisallowXRP))
+        // Obeying the lsfDisallowXRP flag was a bug.  Piggyback on
+        // featureDepositAuth to remove the bug.
+        bool const depositAuth {ctx_.view().rules().enabled(featureDepositAuth)};
+        if (!depositAuth &&
+            (txAccount == src && (sled->getFlags() & lsfDisallowXRP)))
             return tecNO_TARGET;
+
+        // Check whether the destination account requires deposit authorization.
+        if (depositAuth && (sled->getFlags() & lsfDepositAuth))
+        {
+            // A destination account that requires authorization has two
+            // ways to get a Payment Channel Claim into the account:
+            //  1. If Account == Destination, or
+            //  2. If Account is deposit preauthorized by destination.
+            if (txAccount != dst)
+            {
+                if (! view().exists (keylet::depositPreauth (dst, txAccount)))
+                    return tecNO_PERMISSION;
+            }
+        }
 
         (*slep)[sfBalance] = ctx_.tx[sfBalance];
         XRPAmount const reqDelta = reqBalance - chanBalance;

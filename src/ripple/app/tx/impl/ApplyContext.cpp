@@ -17,12 +17,13 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/tx/impl/ApplyContext.h>
+#include <ripple/app/tx/impl/InvariantCheck.h>
 #include <ripple/app/tx/impl/Transactor.h>
 #include <ripple/basics/Log.h>
 #include <ripple/json/to_string.h>
 #include <ripple/protocol/Indexes.h>
+#include <ripple/protocol/Feature.h>
 #include <cassert>
 
 namespace ripple {
@@ -67,6 +68,85 @@ ApplyContext::visit (std::function <void (
     std::shared_ptr<SLE const> const&)> const& func)
 {
     view_->visit(base_, func);
+}
+
+TER
+ApplyContext::failInvariantCheck (TER const result)
+{
+    // If we already failed invariant checks before and we are now attempting to
+    // only charge a fee, and even that fails the invariant checks something is
+    // very wrong. We switch to tefINVARIANT_FAILED, which does NOT get included
+    // in a ledger.
+
+    return (result == tecINVARIANT_FAILED || result == tefINVARIANT_FAILED)
+        ? TER{tefINVARIANT_FAILED}
+        : TER{tecINVARIANT_FAILED};
+}
+
+template<std::size_t... Is>
+TER
+ApplyContext::checkInvariantsHelper(
+    TER const result,
+    XRPAmount const fee,
+    std::index_sequence<Is...>)
+{
+    if (view_->rules().enabled(featureEnforceInvariants))
+    {
+        auto checkers = getInvariantChecks();
+        try
+        {
+            // call each check's per-entry method
+            visit (
+                [&checkers](
+                    uint256 const& index,
+                    bool isDelete,
+                    std::shared_ptr <SLE const> const& before,
+                    std::shared_ptr <SLE const> const& after)
+                {
+                    // Sean Parent for_each_argument trick
+                    (void)std::array<int, sizeof...(Is)>{
+                        {((std::get<Is>(checkers).
+                            visitEntry(index, isDelete, before, after)), 0)...}
+                    };
+                });
+
+            // Sean Parent for_each_argument trick (a fold expression with `&&`
+            // would be really nice here when we move to C++-17)
+            std::array<bool, sizeof...(Is)> finalizers {{
+                std::get<Is>(checkers).finalize(tx, result, fee, journal)...}};
+
+            // call each check's finalizer to see that it passes
+            if (! std::all_of( finalizers.cbegin(), finalizers.cend(),
+                    [](auto const& b) { return b; }))
+            {
+                JLOG(journal.fatal()) <<
+                    "Transaction has failed one or more invariants: " <<
+                    to_string(tx.getJson (JsonOptions::none));
+
+                return failInvariantCheck (result);
+            }
+        }
+        catch(std::exception const& ex)
+        {
+            JLOG(journal.fatal()) <<
+                "Transaction caused an exception in an invariant" <<
+                ", ex: " << ex.what() <<
+                ", tx: " << to_string(tx.getJson (JsonOptions::none));
+
+            return failInvariantCheck (result);
+        }
+    }
+
+    return result;
+}
+
+TER
+ApplyContext::checkInvariants(TER const result, XRPAmount const fee)
+{
+    assert (isTesSuccess(result) || isTecClaim(result));
+
+    return checkInvariantsHelper(result, fee,
+        std::make_index_sequence<std::tuple_size<InvariantChecks>::value>{});
 }
 
 } // ripple

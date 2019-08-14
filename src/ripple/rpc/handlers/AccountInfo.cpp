@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 
 #include <ripple/app/main/Application.h>
 #include <ripple/app/misc/TxQ.h>
@@ -25,8 +24,8 @@
 #include <ripple/ledger/ReadView.h>
 #include <ripple/protocol/ErrorCodes.h>
 #include <ripple/protocol/Indexes.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/protocol/types.h>
+#include <ripple/protocol/jss.h>
+#include <ripple/protocol/UintTypes.h>
 #include <ripple/rpc/Context.h>
 #include <ripple/rpc/impl/RPCHelpers.h>
 
@@ -105,7 +104,7 @@ Json::Value doAccountInfo (RPC::Context& context)
             // multiple SignerLists on one account.
             auto const sleSigners = ledger->read (keylet::signers (accountID));
             if (sleSigners)
-                jvSignerList.append (sleSigners->getJson (0));
+                jvSignerList.append (sleSigners->getJson (JsonOptions::none));
 
             result[jss::account_data][jss::signer_lists] =
                 std::move(jvSignerList);
@@ -116,12 +115,12 @@ Json::Value doAccountInfo (RPC::Context& context)
             Json::Value jvQueueData = Json::objectValue;
 
             auto const txs = context.app.getTxQ().getAccountTxs(
-                accountID, context.app.config(), *ledger);
-            if (txs && !txs->empty())
+                accountID, *ledger);
+            if (!txs.empty())
             {
-                jvQueueData[jss::txn_count] = static_cast<Json::UInt>(txs->size());
-                jvQueueData[jss::lowest_sequence] = txs->begin()->first;
-                jvQueueData[jss::highest_sequence] = txs->rbegin()->first;
+                jvQueueData[jss::txn_count] = static_cast<Json::UInt>(txs.size());
+                jvQueueData[jss::lowest_sequence] = txs.begin()->first;
+                jvQueueData[jss::highest_sequence] = txs.rbegin()->first;
 
                 auto& jvQueueTx = jvQueueData[jss::transactions];
                 jvQueueTx = Json::arrayValue;
@@ -129,7 +128,7 @@ Json::Value doAccountInfo (RPC::Context& context)
                 boost::optional<bool> anyAuthChanged(false);
                 boost::optional<XRPAmount> totalSpend(0);
 
-                for (auto const& tx : *txs)
+                for (auto const& tx : txs)
                 {
                     Json::Value jvTx = Json::objectValue;
 

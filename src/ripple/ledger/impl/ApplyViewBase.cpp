@@ -17,9 +17,9 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/ledger/detail/ApplyViewBase.h>
 #include <ripple/basics/contract.h>
+#include <ripple/ledger/CashDiff.h>
 
 namespace ripple {
 namespace detail {
@@ -189,6 +189,17 @@ ApplyViewBase::rawDestroyXRP(
     XRPAmount const& fee)
 {
     items_.destroyXRP(fee);
+}
+
+//---
+
+CashDiff cashFlowDiff (
+    CashFilter lhsFilter, ApplyViewBase const& lhs,
+    CashFilter rhsFilter, ApplyViewBase const& rhs)
+{
+    assert (lhs.base_ == rhs.base_);
+    return CashDiff {
+        *lhs.base_, lhsFilter, lhs.items_, rhsFilter, rhs.items_ };
 }
 
 } // detail

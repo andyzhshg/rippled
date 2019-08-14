@@ -22,7 +22,6 @@
 
 #include <ripple/basics/win32_workaround.h>
 #include <ripple/beast/xor_shift_engine.h>
-#include <beast/core/detail/is_call_possible.hpp>
 #include <boost/thread/tss.hpp>
 #include <cassert>
 #include <cstddef>
@@ -30,10 +29,11 @@
 #include <cstring>
 #include <random>
 #include <limits>
-#include <type_traits>
+#include <ripple/beast/cxx17/type_traits.h> // <type_traits>
 
 namespace ripple {
 
+#ifndef __INTELLISENSE__
 static_assert (
     std::is_integral <beast::xor_shift_engine::result_type>::value &&
     std::is_unsigned <beast::xor_shift_engine::result_type>::value,
@@ -43,6 +43,7 @@ static_assert (
     std::numeric_limits<beast::xor_shift_engine::result_type>::max() >=
     std::numeric_limits<std::uint64_t>::max(),
         "The Ripple default PRNG engine return must be at least 64 bits wide.");
+#endif
 
 namespace detail {
 
@@ -50,7 +51,7 @@ namespace detail {
 // Determines if a type can be called like an Engine
 template <class Engine, class Result = typename Engine::result_type>
 using is_engine =
-    beast::detail::is_call_possible<Engine, Result()>;
+    std::is_invocable<Engine, Result()>;
 }
 
 /** Return the default random engine.

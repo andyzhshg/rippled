@@ -15,12 +15,13 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/test/jtx.h>
+#include <test/jtx.h>
+#include <test/jtx/envconfig.h>
 #include <ripple/app/tx/apply.h>
 #include <ripple/basics/StringUtilities.h>
+#include <ripple/json/json_reader.h>
 #include <ripple/protocol/Feature.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 
 namespace ripple {
 namespace test {
@@ -52,7 +53,8 @@ struct Regression_test : public beast::unit_test::suite
         // be reproduced against an open ledger. Make a local
         // closed ledger and work with it directly.
         auto closed = std::make_shared<Ledger>(
-            create_genesis, env.app().config(), env.app().family());
+            create_genesis, env.app().config(),
+            std::vector<uint256>{}, env.app().family());
         auto expectedDrops = SYSTEM_CURRENCY_START;
         BEAST_EXPECT(closed->info().drops == expectedDrops);
 
@@ -162,15 +164,12 @@ struct Regression_test : public beast::unit_test::suite
     {
         testcase("Autofilled fee should use the escalated fee");
         using namespace jtx;
-        Env env(*this, []()
+        Env env(*this, envconfig([](std::unique_ptr<Config> cfg)
             {
-                auto p = std::make_unique<Config>();
-                setupConfigForUnitTests(*p);
-                auto& section = p->section("transaction_queue");
-                section.set("minimum_txn_in_ledger_standalone", "3");
-                return p;
-            }(),
-            features(featureFeeEscalation));
+                cfg->section("transaction_queue")
+                    .set("minimum_txn_in_ledger_standalone", "3");
+                return cfg;
+            }));
         Env_ss envs(env);
 
         auto const alice = Account("alice");
@@ -199,12 +198,57 @@ struct Regression_test : public beast::unit_test::suite
         }
     }
 
+    void testFeeEscalationExtremeConfig()
+    {
+        testcase("Fee escalation shouldn't allocate extreme memory");
+        using clock_type = std::chrono::steady_clock;
+        using namespace jtx;
+        using namespace std::chrono_literals;
+
+        Env env(*this, envconfig([](std::unique_ptr<Config> cfg)
+        {
+            auto& s = cfg->section("transaction_queue");
+            s.set("minimum_txn_in_ledger_standalone", "4294967295");
+            s.set("minimum_txn_in_ledger", "4294967295");
+            s.set("target_txn_in_ledger", "4294967295");
+            s.set("normal_consensus_increase_percent", "4294967295");
+
+            return cfg;
+        }));
+
+        env(noop(env.master));
+        // This test will probably fail if any breakpoints are encountered,
+        // but should pass on even the slowest machines.
+        auto const start = clock_type::now();
+        env.close();
+        BEAST_EXPECT(clock_type::now() - start < 1s);
+    }
+
+    void testJsonInvalid()
+    {
+        using namespace jtx;
+        using boost::asio::buffer;
+        testcase("jsonInvalid");
+
+        std::string const request = R"json({"command":"path_find","id":19,"subcommand":"create","source_account":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","destination_account":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","destination_amount":"1000000","source_currencies":[{"currency":"0000000000000000000000000000000000000000"},{"currency":"0000000000000000000000005553440000000000"},{"currency":"0000000000000000000000004254430000000000"},{"issuer":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","currency":"0000000000000000000000004254430000000000"},{"issuer":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","currency":"0000000000000000000000004254430000000000"},{"issuer":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","currency":"0000000000000000000000004555520000000000"},{"currency":"0000000000000000000000004554480000000000"},{"currency":"0000000000000000000000004A50590000000000"},{"issuer":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","currency":"000000000000000000000000434E590000000000"},{"currency":"0000000000000000000000004742490000000000"},{"issuer":"rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh","currency":"0000000000000000000000004341440000000000"}]})json";
+
+        Json::Value jvRequest;
+        Json::Reader jrReader;
+
+        std::vector<boost::asio::const_buffer> buffers;
+        buffers.emplace_back(buffer(request, 1024));
+        buffers.emplace_back(buffer(request.data() + 1024, request.length() - 1024));
+        BEAST_EXPECT(jrReader.parse(jvRequest, buffers) && jvRequest.isObject());
+    }
+
     void run() override
     {
         testOffer1();
         testLowBalanceDestroy();
         testSecp256r1key();
         testFeeEscalationAutofill();
+        testFeeEscalationExtremeConfig();
+        testJsonInvalid();
     }
 };
 

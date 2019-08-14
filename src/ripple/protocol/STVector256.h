@@ -70,7 +70,7 @@ public:
     add (Serializer& s) const override;
 
     Json::Value
-    getJson (int) const override;
+    getJson (JsonOptions) const override;
 
     bool
     isEquivalent (const STBase& t) const override;
@@ -142,6 +142,18 @@ public:
     value() const
     {
         return mValue;
+    }
+
+    std::vector<uint256>::iterator
+    insert(std::vector<uint256>::const_iterator pos, uint256 const& value)
+    {
+        return mValue.insert(pos, value);
+    }
+
+    std::vector<uint256>::iterator
+    insert(std::vector<uint256>::const_iterator pos, uint256&& value)
+    {
+        return mValue.insert(pos, std::move(value));
     }
 
     void

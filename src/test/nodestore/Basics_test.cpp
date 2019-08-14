@@ -17,8 +17,7 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/nodestore/tests/Base.test.h>
+#include <test/nodestore/TestBase.h>
 #include <ripple/nodestore/DummyScheduler.h>
 #include <ripple/nodestore/Manager.h>
 #include <ripple/nodestore/impl/DecodedBlob.h>
@@ -77,7 +76,7 @@ public:
         }
     }
 
-    void run ()
+    void run () override
     {
         std::uint64_t const seedValue = 50;
 

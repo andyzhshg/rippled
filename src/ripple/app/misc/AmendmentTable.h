@@ -21,7 +21,7 @@
 #define RIPPLE_APP_MISC_AMENDMENTTABLE_H_INCLUDED
 
 #include <ripple/app/ledger/Ledger.h>
-#include <ripple/app/misc/Validations.h>
+#include <ripple/protocol/STValidation.h>
 #include <ripple/core/ConfigSections.h>
 #include <ripple/protocol/Protocol.h>
 
@@ -46,6 +46,14 @@ public:
 
     virtual bool isEnabled (uint256 const& amendment) = 0;
     virtual bool isSupported (uint256 const& amendment) = 0;
+
+    /**
+     * @brief returns true if one or more amendments on the network
+     * have been enabled that this server does not support
+     *
+     * @return true if an unsupported feature is enabled on the network
+     */
+    virtual bool hasUnsupportedEnabled () = 0;
 
     virtual Json::Value getJson (int) = 0;
 
@@ -78,34 +86,30 @@ public:
         NetClock::time_point closeTime,
         std::set <uint256> const& enabledAmendments,
         majorityAmendments_t const& majorityAmendments,
-        ValidationSet const& valSet) = 0;
+        std::vector<STValidation::pointer> const& valSet) = 0;
 
     // Called by the consensus code when we need to
     // add feature entries to a validation
     virtual std::vector <uint256>
     doValidation (std::set <uint256> const& enabled) = 0;
 
-    // The two function below adapt the API callers expect to the
+    // The set of amendments to enable in the genesis ledger
+    // This will return all known, non-vetoed amendments.
+    // If we ever have two amendments that should not both be
+    // enabled at the same time, we should ensure one is vetoed.
+    virtual std::vector <uint256>
+    getDesired () = 0;
+
+    // The function below adapts the API callers expect to the
     // internal amendment table API. This allows the amendment
     // table implementation to be independent of the ledger
     // implementation. These APIs will merge when the view code
     // supports a full ledger API
 
     void
-    doValidation (std::shared_ptr <ReadView const> const& lastClosedLedger,
-        STObject& baseValidation)
-    {
-        auto ourAmendments =
-            doValidation (getEnabledAmendments(*lastClosedLedger));
-        if (! ourAmendments.empty())
-            baseValidation.setFieldV256 (sfAmendments,
-               STVector256 (sfAmendments, ourAmendments));
-    }
-
-    void
     doVoting (
         std::shared_ptr <ReadView const> const& lastClosedLedger,
-        ValidationSet const& parentValidations,
+        std::vector<STValidation::pointer> const& parentValidations,
         std::shared_ptr<SHAMap> const& initialPosition)
     {
         // Ask implementation what to do

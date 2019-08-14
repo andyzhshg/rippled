@@ -17,12 +17,10 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/app/main/Application.h>
 #include <ripple/overlay/PeerSet.h>
+#include <ripple/app/main/Application.h>
 #include <ripple/core/JobQueue.h>
 #include <ripple/overlay/Overlay.h>
-#include <beast/core/placeholders.hpp>
 
 namespace ripple {
 
@@ -55,9 +53,7 @@ PeerSet::PeerSet (Application& app, uint256 const& hash,
     assert ((mTimerInterval > 10ms) && (mTimerInterval < 30s));
 }
 
-PeerSet::~PeerSet ()
-{
-}
+PeerSet::~PeerSet() = default;
 
 bool PeerSet::insert (std::shared_ptr<Peer> const& ptr)
 {

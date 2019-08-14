@@ -17,10 +17,9 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/protocol/ErrorCodes.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/test/jtx.h>
+#include <ripple/protocol/jss.h>
+#include <test/jtx.h>
 #include <ripple/beast/unit_test.h>
 #include <ripple/app/ledger/LedgerMaster.h>
 
@@ -31,17 +30,6 @@ namespace RPC {
 class LedgerRequestRPC_test : public beast::unit_test::suite
 {
 public:
-
-    static
-    std::unique_ptr<Config>
-    makeNonAdminConfig()
-    {
-        auto p = std::make_unique<Config>();
-        test::setupConfigForUnitTests(*p);
-        (*p)["port_rpc"].set("admin","");
-        (*p)["port_ws"].set("admin","");
-        return p;
-    }
 
     void testLedgerRequest()
     {
@@ -161,7 +149,8 @@ public:
     void testEvolution()
     {
         using namespace test::jtx;
-        Env env { *this };
+        Env env {*this, FeatureBitset{}}; //the hashes being checked below assume
+                                     //no amendments
         Account const gw { "gateway" };
         auto const USD = gw["USD"];
         env.fund(XRP(100000), gw);
@@ -260,9 +249,10 @@ public:
     void testMoreThan256Closed()
     {
         using namespace test::jtx;
+        using namespace std::chrono_literals;
         Env env {*this};
         Account const gw {"gateway"};
-        env.app().getLedgerMaster().tune(0, 3600);
+        env.app().getLedgerMaster().tune(0, 1h);
         auto const USD = gw["USD"];
         env.fund(XRP(100000), gw);
 
@@ -288,19 +278,21 @@ public:
     void testNonAdmin()
     {
         using namespace test::jtx;
-        Env env { *this, makeNonAdminConfig() };
+        Env env { *this, envconfig(no_admin) };
         Account const gw { "gateway" };
         auto const USD = gw["USD"];
         env.fund(XRP(100000), gw);
         env.close();
 
-        auto const result = env.rpc ( "ledger_request", "1" ) [jss::result];
-        BEAST_EXPECT(result[jss::error]         == "noPermission");
-        BEAST_EXPECT(result[jss::status]        == "error");
-        BEAST_EXPECT(result[jss::error_message] == "You don't have permission for this command.");
+        auto const result = env.rpc ( "ledger_request", "1" )  [jss::result];
+        // The current HTTP/S ServerHandler returns an HTTP 403 error code here
+        // rather than a noPermission JSON error.  The JSONRPCClient just eats that
+        // error and returns an null result.
+        BEAST_EXPECT(result.type() == Json::nullValue);
+
     }
 
-    void run ()
+    void run () override
     {
         testLedgerRequest();
         testEvolution();

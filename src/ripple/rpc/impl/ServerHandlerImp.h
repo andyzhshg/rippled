@@ -20,14 +20,15 @@
 #ifndef RIPPLE_RPC_SERVERHANDLERIMP_H_INCLUDED
 #define RIPPLE_RPC_SERVERHANDLERIMP_H_INCLUDED
 
-#include <ripple/core/Job.h>
-#include <ripple/core/JobCoro.h>
+#include <ripple/core/JobQueue.h>
 #include <ripple/rpc/impl/WSInfoSub.h>
 #include <ripple/server/Server.h>
 #include <ripple/server/Session.h>
 #include <ripple/server/WSSession.h>
 #include <ripple/rpc/RPCHandler.h>
 #include <ripple/app/main/CollectorManager.h>
+#include <ripple/json/Output.h>
+#include <boost/utility/string_view.hpp>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -46,11 +47,15 @@ class ServerHandlerImp
 public:
     struct Setup
     {
+        explicit Setup() = default;
+
         std::vector<Port> ports;
 
         // Memberspace
         struct client_t
         {
+            explicit client_t() = default;
+
             bool secure = false;
             std::string ip;
             std::uint16_t port = 0;
@@ -66,6 +71,8 @@ public:
         // Configuration for the Overlay
         struct overlay_t
         {
+            explicit overlay_t() = default;
+
             boost::asio::ip::address ip;
             std::uint16_t port = 0;
         };
@@ -115,7 +122,7 @@ public:
     //
 
     void
-    onStop();
+    onStop() override;
 
     //
     // Handler
@@ -126,15 +133,25 @@ public:
         boost::asio::ip::tcp::endpoint endpoint);
 
     Handoff
-    onHandoff (Session& session,
-        std::unique_ptr <beast::asio::ssl_bundle>&& bundle,
-            http_request_type&& request,
-                boost::asio::ip::tcp::endpoint remote_address);
+    onHandoff(
+        Session& session,
+        std::unique_ptr<beast::asio::ssl_bundle>&& bundle,
+        http_request_type&& request,
+        boost::asio::ip::tcp::endpoint const& remote_address);
 
     Handoff
-    onHandoff (Session& session, boost::asio::ip::tcp::socket&& socket,
+    onHandoff(
+        Session& session,
         http_request_type&& request,
-            boost::asio::ip::tcp::endpoint remote_address);
+        boost::asio::ip::tcp::endpoint const& remote_address)
+    {
+        return onHandoff(
+            session,
+            {},
+            std::forward<http_request_type>(request),
+            remote_address);
+    }
+
     void
     onRequest (Session& session);
 
@@ -149,31 +166,25 @@ public:
     void
     onStopped (Server&);
 
-    //--------------------------------------------------------------------------
-
+private:
     Json::Value
     processSession(
         std::shared_ptr<WSSession> const& session,
-            std::shared_ptr<JobCoro> const& coro,
+            std::shared_ptr<JobQueue::Coro> const& coro,
                 Json::Value const& jv);
 
     void
     processSession (std::shared_ptr<Session> const&,
-        std::shared_ptr<JobCoro> jobCoro);
+        std::shared_ptr<JobQueue::Coro> coro);
 
     void
     processRequest (Port const& port, std::string const& request,
         beast::IP::Endpoint const& remoteIPAddress, Output&&,
-        std::shared_ptr<JobCoro> jobCoro,
-        std::string forwardedFor, std::string user);
+        std::shared_ptr<JobQueue::Coro> coro,
+        boost::string_view forwardedFor, boost::string_view user);
 
-private:
-    bool
-    isWebsocketUpgrade (http_request_type const& request);
-
-    bool
-    authorized (Port const& port,
-        std::map<std::string, std::string> const& h);
+    Handoff
+    statusResponse(http_request_type const& request) const;
 };
 
 }

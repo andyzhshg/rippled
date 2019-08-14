@@ -17,16 +17,15 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/paths/impl/Steps.h>
 #include <ripple/basics/contract.h>
 #include <ripple/json/json_writer.h>
+#include <ripple/ledger/ReadView.h>
+#include <ripple/protocol/Feature.h>
 #include <ripple/protocol/IOUAmount.h>
 #include <ripple/protocol/XRPAmount.h>
 
-#include <boost/range/adaptors.hpp>
-#include <boost/range/algorithm.hpp>
-
+#include <algorithm>
 #include <numeric>
 #include <sstream>
 
@@ -99,9 +98,11 @@ toStep (
     if (e1->isOffer() && e2->isAccount())
     {
         // should already be taken care of
-        JLOG (j.warn())
+        JLOG (j.error())
             << "Found offer/account payment step. Aborting payment strand.";
         assert (0);
+        if (ctx.view.rules().enabled(fix1373))
+            return {temBAD_PATH, std::unique_ptr<Step>{}};
         Throw<FlowException> (tefEXCEPTION, "Found offer/account payment step.");
     }
 
@@ -132,14 +133,16 @@ toStep (
 }
 
 std::pair<TER, Strand>
-toStrand (
+toStrandV1 (
     ReadView const& view,
     AccountID const& src,
     AccountID const& dst,
     Issue const& deliver,
+    boost::optional<Quality> const& limitQuality,
     boost::optional<Issue> const& sendMaxIssue,
     STPath const& path,
     bool ownerPaysTransferFee,
+    bool offerCrossing,
     beast::Journal j)
 {
     if (isXRP (src))
@@ -200,9 +203,13 @@ toStrand (
         pes.push_back (&*sendMaxPE);
     for (auto& i : path)
         pes.push_back (&i);
-    auto const lastCurrency =
-        (*boost::find_if (boost::adaptors::reverse (pes), hasCurrency))->getCurrency ();
-    if (lastCurrency != deliver.currency)
+
+    // Note that for offer crossing (only) we do use an offer book even if
+    // all that is changing is the Issue.account.
+    STPathElement const* const lastCurrency =
+        *std::find_if (pes.rbegin(), pes.rend(), hasCurrency);
+    if ((lastCurrency->getCurrency() != deliver.currency) ||
+        (offerCrossing && lastCurrency->getIssuerID() != deliver.account))
     {
         deliverOfferNode.emplace (boost::none, deliver.currency, deliver.account);
         pes.push_back (&*deliverOfferNode);
@@ -218,6 +225,7 @@ toStrand (
 
     auto const strandSrc = firstNode.getAccountID ();
     auto const strandDst = lastNode.getAccountID ();
+    bool const isDefaultPath = path.empty();
 
     Strand result;
     result.reserve (2 * pes.size ());
@@ -235,8 +243,9 @@ toStrand (
     seenBookOuts.reserve (pes.size());
     auto ctx = [&](bool isLast = false)
     {
-        return StrandContext{view, result, strandSrc, strandDst, isLast,
-            ownerPaysTransferFee, seenDirectIssues, seenBookOuts, j};
+        return StrandContext{view, result, strandSrc, strandDst, deliver,
+            limitQuality, isLast, ownerPaysTransferFee, offerCrossing,
+            isDefaultPath, seenDirectIssues, seenBookOuts, j};
     };
 
     for (int i = 0; i < pes.size () - 1; ++i)
@@ -370,16 +379,349 @@ toStrand (
     return {tesSUCCESS, std::move (result)};
 }
 
+
+std::pair<TER, Strand>
+toStrandV2 (
+    ReadView const& view,
+    AccountID const& src,
+    AccountID const& dst,
+    Issue const& deliver,
+    boost::optional<Quality> const& limitQuality,
+    boost::optional<Issue> const& sendMaxIssue,
+    STPath const& path,
+    bool ownerPaysTransferFee,
+    bool offerCrossing,
+    beast::Journal j)
+{
+    if (isXRP(src) || isXRP(dst) ||
+        !isConsistent(deliver) || (sendMaxIssue && !isConsistent(*sendMaxIssue)))
+        return {temBAD_PATH, Strand{}};
+
+    if ((sendMaxIssue && sendMaxIssue->account == noAccount()) ||
+        (src == noAccount()) ||
+        (dst == noAccount()) ||
+        (deliver.account == noAccount()))
+        return {temBAD_PATH, Strand{}};
+
+    for (auto const& pe : path)
+    {
+        auto const t = pe.getNodeType();
+
+        if ((t & ~STPathElement::typeAll) || !t)
+            return {temBAD_PATH, Strand{}};
+
+        bool const hasAccount = t & STPathElement::typeAccount;
+        bool const hasIssuer = t & STPathElement::typeIssuer;
+        bool const hasCurrency = t & STPathElement::typeCurrency;
+
+        if (hasAccount && (hasIssuer || hasCurrency))
+            return {temBAD_PATH, Strand{}};
+
+        if (hasIssuer && isXRP(pe.getIssuerID()))
+            return {temBAD_PATH, Strand{}};
+
+        if (hasAccount && isXRP(pe.getAccountID()))
+            return {temBAD_PATH, Strand{}};
+
+        if (hasCurrency && hasIssuer &&
+            isXRP(pe.getCurrency()) != isXRP(pe.getIssuerID()))
+            return {temBAD_PATH, Strand{}};
+
+        if (hasIssuer && (pe.getIssuerID() == noAccount()))
+            return {temBAD_PATH, Strand{}};
+
+        if (hasAccount && (pe.getAccountID() == noAccount()))
+            return {temBAD_PATH, Strand{}};
+    }
+
+    Issue curIssue = [&]
+    {
+        auto const& currency =
+            sendMaxIssue ? sendMaxIssue->currency : deliver.currency;
+        if (isXRP (currency))
+            return xrpIssue ();
+        return Issue{currency, src};
+    }();
+
+    auto hasCurrency = [](STPathElement const pe)
+    {
+        return pe.getNodeType () & STPathElement::typeCurrency;
+    };
+
+    std::vector<STPathElement> normPath;
+    // reserve enough for the path, the implied source, destination,
+    // sendmax and deliver.
+    normPath.reserve(4 + path.size());
+    {
+        normPath.emplace_back(
+            STPathElement::typeAll, src, curIssue.currency, curIssue.account);
+
+        if (sendMaxIssue && sendMaxIssue->account != src &&
+            (path.empty() || !path[0].isAccount() ||
+             path[0].getAccountID() != sendMaxIssue->account))
+        {
+            normPath.emplace_back(sendMaxIssue->account, boost::none, boost::none);
+        }
+
+        for (auto const& i : path)
+            normPath.push_back(i);
+
+        {
+            // Note that for offer crossing (only) we do use an offer book
+            // even if all that is changing is the Issue.account.
+            STPathElement const& lastCurrency =
+                *std::find_if (normPath.rbegin(), normPath.rend(),
+                    hasCurrency);
+            if ((lastCurrency.getCurrency() != deliver.currency) ||
+                (offerCrossing &&
+                    lastCurrency.getIssuerID() != deliver.account))
+            {
+                normPath.emplace_back(
+                    boost::none, deliver.currency, deliver.account);
+            }
+        }
+
+        if (!((normPath.back().isAccount() &&
+               normPath.back().getAccountID() == deliver.account) ||
+              (dst == deliver.account)))
+        {
+            normPath.emplace_back(deliver.account, boost::none, boost::none);
+        }
+
+        if (!normPath.back().isAccount() ||
+            normPath.back().getAccountID() != dst)
+        {
+            normPath.emplace_back(dst, boost::none, boost::none);
+        }
+    }
+
+    if (normPath.size() < 2)
+        return {temBAD_PATH, Strand{}};
+
+    auto const strandSrc = normPath.front().getAccountID ();
+    auto const strandDst = normPath.back().getAccountID ();
+    bool const isDefaultPath = path.empty();
+
+    Strand result;
+    result.reserve (2 * normPath.size ());
+
+    /* A strand may not include the same account node more than once
+       in the same currency. In a direct step, an account will show up
+       at most twice: once as a src and once as a dst (hence the two element array).
+       The strandSrc and strandDst will only show up once each.
+    */
+    std::array<boost::container::flat_set<Issue>, 2> seenDirectIssues;
+    // A strand may not include the same offer book more than once
+    boost::container::flat_set<Issue> seenBookOuts;
+    seenDirectIssues[0].reserve (normPath.size());
+    seenDirectIssues[1].reserve (normPath.size());
+    seenBookOuts.reserve (normPath.size());
+    auto ctx = [&](bool isLast = false)
+    {
+        return StrandContext{view, result, strandSrc, strandDst, deliver,
+            limitQuality, isLast, ownerPaysTransferFee, offerCrossing,
+            isDefaultPath, seenDirectIssues, seenBookOuts, j};
+    };
+
+    for (std::size_t i = 0; i < normPath.size () - 1; ++i)
+    {
+        /* Iterate through the path elements considering them in pairs.
+           The first element of the pair is `cur` and the second element is
+           `next`. When an offer is one of the pairs, the step created will be for
+           `next`. This means when `cur` is an offer and `next` is an
+           account then no step is created, as a step has already been created for
+           that offer.
+        */
+        boost::optional<STPathElement> impliedPE;
+        auto cur = &normPath[i];
+        auto const next = &normPath[i + 1];
+
+        if (cur->isAccount())
+            curIssue.account = cur->getAccountID ();
+        else if (cur->hasIssuer())
+            curIssue.account = cur->getIssuerID ();
+
+        if (cur->hasCurrency())
+        {
+            curIssue.currency = cur->getCurrency ();
+            if (isXRP(curIssue.currency))
+                curIssue.account = xrpAccount();
+        }
+
+        if (cur->isAccount() && next->isAccount())
+        {
+            if (!isXRP (curIssue.currency) &&
+                curIssue.account != cur->getAccountID () &&
+                curIssue.account != next->getAccountID ())
+            {
+                JLOG (j.trace()) << "Inserting implied account";
+                auto msr = make_DirectStepI (ctx(), cur->getAccountID (),
+                    curIssue.account, curIssue.currency);
+                if (msr.first != tesSUCCESS)
+                    return {msr.first, Strand{}};
+                result.push_back (std::move (msr.second));
+                impliedPE.emplace(STPathElement::typeAccount,
+                    curIssue.account, xrpCurrency(), xrpAccount());
+                cur = &*impliedPE;
+            }
+        }
+        else if (cur->isAccount() && next->isOffer())
+        {
+            if (curIssue.account != cur->getAccountID ())
+            {
+                JLOG (j.trace()) << "Inserting implied account before offer";
+                auto msr = make_DirectStepI (ctx(), cur->getAccountID (),
+                    curIssue.account, curIssue.currency);
+                if (msr.first != tesSUCCESS)
+                    return {msr.first, Strand{}};
+                result.push_back (std::move (msr.second));
+                impliedPE.emplace(STPathElement::typeAccount,
+                    curIssue.account, xrpCurrency(), xrpAccount());
+                cur = &*impliedPE;
+            }
+        }
+        else if (cur->isOffer() && next->isAccount())
+        {
+            if (curIssue.account != next->getAccountID () &&
+                !isXRP (next->getAccountID ()))
+            {
+                if (isXRP(curIssue))
+                {
+                    if (i != normPath.size() - 2)
+                        return {temBAD_PATH, Strand{}};
+                    else
+                    {
+                        // Last step. insert xrp endpoint step
+                        auto msr = make_XRPEndpointStep (ctx(), next->getAccountID());
+                        if (msr.first != tesSUCCESS)
+                            return {msr.first, Strand{}};
+                        result.push_back(std::move(msr.second));
+                    }
+                }
+                else
+                {
+                    JLOG(j.trace()) << "Inserting implied account after offer";
+                    auto msr = make_DirectStepI(ctx(),
+                        curIssue.account, next->getAccountID(), curIssue.currency);
+                    if (msr.first != tesSUCCESS)
+                        return {msr.first, Strand{}};
+                    result.push_back(std::move(msr.second));
+                }
+            }
+            continue;
+        }
+
+        if (!next->isOffer() &&
+            next->hasCurrency() && next->getCurrency () != curIssue.currency)
+        {
+            // Should never happen
+            assert(0);
+            return {temBAD_PATH, Strand{}};
+        }
+
+        auto s =
+            toStep (ctx (/*isLast*/ i == normPath.size () - 2), cur, next, curIssue);
+        if (s.first == tesSUCCESS)
+            result.emplace_back (std::move (s.second));
+        else
+        {
+            JLOG (j.debug()) << "toStep failed: " << s.first;
+            return {s.first, Strand{}};
+        }
+    }
+
+    auto checkStrand = [&]() -> bool {
+        auto stepAccts = [](Step const& s) -> std::pair<AccountID, AccountID> {
+            if (auto r = s.directStepAccts())
+                return *r;
+            if (auto const r = s.bookStepBook())
+                return std::make_pair(r->in.account, r->out.account);
+            Throw<FlowException>(
+                tefEXCEPTION, "Step should be either a direct or book step");
+            return std::make_pair(xrpAccount(), xrpAccount());
+        };
+
+        auto curAccount = src;
+        auto curIssue = [&] {
+            auto& currency =
+                sendMaxIssue ? sendMaxIssue->currency : deliver.currency;
+            if (isXRP(currency))
+                return xrpIssue();
+            return Issue{currency, src};
+        }();
+
+        for (auto const& s : result)
+        {
+            auto const accts = stepAccts(*s);
+            if (accts.first != curAccount)
+                return false;
+
+            if (auto const b = s->bookStepBook())
+            {
+                if (curIssue != b->in)
+                    return false;
+                curIssue = b->out;
+            }
+            else
+            {
+                curIssue.account = accts.second;
+            }
+
+            curAccount = accts.second;
+        }
+        if (curAccount != dst)
+            return false;
+        if (curIssue.currency != deliver.currency)
+            return false;
+        if (curIssue.account != deliver.account &&
+            curIssue.account != dst)
+            return false;
+        return true;
+    };
+
+    if (!checkStrand())
+    {
+        JLOG (j.warn()) << "Flow check strand failed";
+        assert(0);
+        return {temBAD_PATH, Strand{}};
+    }
+
+    return {tesSUCCESS, std::move (result)};
+}
+
+std::pair<TER, Strand>
+toStrand (
+    ReadView const& view,
+    AccountID const& src,
+    AccountID const& dst,
+    Issue const& deliver,
+    boost::optional<Quality> const& limitQuality,
+    boost::optional<Issue> const& sendMaxIssue,
+    STPath const& path,
+    bool ownerPaysTransferFee,
+    bool offerCrossing,
+    beast::Journal j)
+{
+    if (view.rules().enabled(fix1373))
+        return toStrandV2(view, src, dst, deliver, limitQuality,
+            sendMaxIssue, path, ownerPaysTransferFee, offerCrossing, j);
+    else
+        return toStrandV1(view, src, dst, deliver, limitQuality,
+            sendMaxIssue, path, ownerPaysTransferFee, offerCrossing, j);
+}
+
 std::pair<TER, std::vector<Strand>>
 toStrands (
     ReadView const& view,
     AccountID const& src,
     AccountID const& dst,
     Issue const& deliver,
+    boost::optional<Quality> const& limitQuality,
     boost::optional<Issue> const& sendMax,
     STPathSet const& paths,
     bool addDefaultPath,
     bool ownerPaysTransferFee,
+    bool offerCrossing,
     beast::Journal j)
 {
     std::vector<Strand> result;
@@ -387,7 +729,8 @@ toStrands (
     // Insert the strand into result if it is not already part of the vector
     auto insert = [&](Strand s)
     {
-        bool const hasStrand = boost::find (result, s) != result.end ();
+        bool const hasStrand =
+            std::find (result.begin(), result.end(), s) != result.end ();
 
         if (!hasStrand)
             result.emplace_back (std::move (s));
@@ -395,8 +738,8 @@ toStrands (
 
     if (addDefaultPath)
     {
-        auto sp = toStrand (
-            view, src, dst, deliver, sendMax, STPath (), ownerPaysTransferFee, j);
+        auto sp = toStrand (view, src, dst, deliver, limitQuality,
+            sendMax, STPath(), ownerPaysTransferFee, offerCrossing, j);
         auto const ter = sp.first;
         auto& strand = sp.second;
 
@@ -427,8 +770,8 @@ toStrands (
     TER lastFailTer = tesSUCCESS;
     for (auto const& p : paths)
     {
-        auto sp = toStrand (
-            view, src, dst, deliver, sendMax, p, ownerPaysTransferFee, j);
+        auto sp = toStrand (view, src, dst, deliver,
+            limitQuality, sendMax, p, ownerPaysTransferFee, offerCrossing, j);
         auto ter = sp.first;
         auto& strand = sp.second;
 
@@ -436,7 +779,8 @@ toStrands (
         {
             lastFailTer = ter;
             JLOG (j.trace())
-                    << "failed to add path: ter: " << ter << "path: " << p.getJson(0);
+                    << "failed to add path: ter: " << ter
+                    << "path: " << p.getJson(JsonOptions::none);
             if (isTemMalformed (ter))
                 return {ter, std::vector<Strand>{}};
         }
@@ -462,19 +806,27 @@ StrandContext::StrandContext (
     std::vector<std::unique_ptr<Step>> const& strand_,
     // A strand may not include an inner node that
     // replicates the source or destination.
-    AccountID strandSrc_,
-    AccountID strandDst_,
+    AccountID const& strandSrc_,
+    AccountID const& strandDst_,
+    Issue const& strandDeliver_,
+    boost::optional<Quality> const& limitQuality_,
     bool isLast_,
     bool ownerPaysTransferFee_,
+    bool offerCrossing_,
+    bool isDefaultPath_,
     std::array<boost::container::flat_set<Issue>, 2>& seenDirectIssues_,
     boost::container::flat_set<Issue>& seenBookOuts_,
     beast::Journal j_)
         : view (view_)
         , strandSrc (strandSrc_)
         , strandDst (strandDst_)
+        , strandDeliver (strandDeliver_)
+        , limitQuality (limitQuality_)
         , isFirst (strand_.empty ())
         , isLast (isLast_)
         , ownerPaysTransferFee (ownerPaysTransferFee_)
+        , offerCrossing (offerCrossing_)
+        , isDefaultPath (isDefaultPath_)
         , strandSize (strand_.size ())
         , prevStep (!strand_.empty () ? strand_.back ().get ()
                      : nullptr)
@@ -498,9 +850,6 @@ isDirectXrpToXrp<XRPAmount, XRPAmount> (Strand const& strand)
     return (strand.size () == 2);
 }
 
-template
-bool
-isDirectXrpToXrp<XRPAmount, XRPAmount> (Strand const& strand);
 template
 bool
 isDirectXrpToXrp<XRPAmount, IOUAmount> (Strand const& strand);

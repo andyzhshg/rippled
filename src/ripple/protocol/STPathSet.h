@@ -117,7 +117,10 @@ public:
         hash_value_ = get_hash (*this);
     }
 
-    int
+    STPathElement(STPathElement const&) = default;
+    STPathElement& operator=(STPathElement const&) = default;
+
+    auto
     getNodeType () const
     {
         return mType;
@@ -139,18 +142,19 @@ public:
     hasIssuer () const
     {
         return getNodeType () & STPathElement::typeIssuer;
-    };
+    }
+
     bool
     hasCurrency () const
     {
         return getNodeType () & STPathElement::typeCurrency;
-    };
+    }
 
     bool
     isNone () const
     {
         return getNodeType () == STPathElement::typeNone;
-    };
+    }
 
     // Nodes are either an account ID or a offer prefix. Offer prefixs denote a
     // class of offers.
@@ -203,8 +207,8 @@ class STPath
 public:
     STPath () = default;
 
-    STPath (std::vector<STPathElement> const& p)
-        : mPath (p)
+    STPath (std::vector<STPathElement> p)
+        : mPath (std::move(p))
     { }
 
     std::vector<STPathElement>::size_type
@@ -237,7 +241,7 @@ public:
         AccountID const& issuer) const;
 
     Json::Value
-    getJson (int) const;
+    getJson (JsonOptions) const;
 
     std::vector<STPathElement>::const_iterator
     begin () const
@@ -279,6 +283,10 @@ public:
         return mPath[i];
     }
 
+    void reserve(size_t s)
+    {
+        mPath.reserve(s);
+    }
 private:
     std::vector<STPathElement> mPath;
 };
@@ -314,7 +322,7 @@ public:
     add (Serializer& s) const override;
 
     Json::Value
-    getJson (int) const override;
+    getJson (JsonOptions) const override;
 
     SerializedTypeID
     getSType () const override

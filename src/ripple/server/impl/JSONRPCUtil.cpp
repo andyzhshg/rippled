@@ -17,10 +17,9 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/basics/Log.h>
 #include <ripple/server/impl/JSONRPCUtil.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/protocol/BuildInfo.h>
 #include <ripple/protocol/SystemParameters.h>
 #include <ripple/json/to_string.h>
@@ -94,6 +93,7 @@ void HTTPReply (
     case 403: output ("HTTP/1.1 403 Forbidden\r\n"); break;
     case 404: output ("HTTP/1.1 404 Not Found\r\n"); break;
     case 500: output ("HTTP/1.1 500 Internal Server Error\r\n"); break;
+    case 503: output ("HTTP/1.1 503 Server is overloaded\r\n"); break;
     }
 
     output (getHTTPHeaderTimestamp ());

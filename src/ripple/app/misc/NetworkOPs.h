@@ -20,18 +20,19 @@
 #ifndef RIPPLE_APP_MISC_NETWORKOPS_H_INCLUDED
 #define RIPPLE_APP_MISC_NETWORKOPS_H_INCLUDED
 
-#include <ripple/core/JobQueue.h>
-#include <ripple/protocol/STValidation.h>
 #include <ripple/app/ledger/Ledger.h>
-#include <ripple/app/ledger/LedgerProposal.h>
+#include <ripple/app/consensus/RCLCxPeerPos.h>
+#include <ripple/core/JobQueue.h>
+#include <ripple/core/Stoppable.h>
 #include <ripple/ledger/ReadView.h>
 #include <ripple/net/InfoSub.h>
+#include <ripple/protocol/STValidation.h>
+#include <boost/asio.hpp>
 #include <memory>
-#include <ripple/core/Stoppable.h>
 #include <deque>
 #include <tuple>
 
-#include "ripple.pb.h"
+#include <ripple/protocol/messages.h>
 
 namespace ripple {
 
@@ -41,6 +42,7 @@ namespace ripple {
 class Peer;
 class LedgerMaster;
 class Transaction;
+class ValidatorKeys;
 
 // This is the primary interface into the "client" portion of the program.
 // Code that wants to do normal operations on the network such as
@@ -95,7 +97,7 @@ public:
     }
 
 public:
-    virtual ~NetworkOPs () = 0;
+    ~NetworkOPs () override = default;
 
     //--------------------------------------------------------------------------
     //
@@ -103,7 +105,7 @@ public:
     //
 
     virtual OperatingMode getOperatingMode () const = 0;
-    virtual std::string strOperatingMode () const = 0;
+    virtual std::string strOperatingMode (bool admin = false) const = 0;
 
     //--------------------------------------------------------------------------
     //
@@ -139,36 +141,33 @@ public:
     //
 
     virtual void getBookPage (
-        bool bUnlimited,
         std::shared_ptr<ReadView const>& lpLedger,
         Book const& book,
         AccountID const& uTakerID,
         bool const bProof,
-        const unsigned int iLimit,
+        unsigned int iLimit,
         Json::Value const& jvMarker,
         Json::Value& jvResult) = 0;
 
     //--------------------------------------------------------------------------
 
     // ledger proposal/close functions
-    virtual void processTrustedProposal (LedgerProposal::pointer proposal,
-        std::shared_ptr<protocol::TMProposeSet> set,
-            NodeID const& node) = 0;
+    virtual void processTrustedProposal (RCLCxPeerPos peerPos,
+        std::shared_ptr<protocol::TMProposeSet> set) = 0;
 
     virtual bool recvValidation (STValidation::ref val,
         std::string const& source) = 0;
 
-    virtual void mapComplete (uint256 const& hash,
-                              std::shared_ptr<SHAMap> const& map) = 0;
+    virtual void mapComplete (std::shared_ptr<SHAMap> const& map,
+        bool fromAcquire) = 0;
 
     // network state machine
     virtual bool beginConsensus (uint256 const& netLCL) = 0;
-    virtual void endConsensus (bool correctLCL) = 0;
+    virtual void endConsensus () = 0;
     virtual void setStandAlone () = 0;
     virtual void setStateTimer () = 0;
 
-    // VFALCO TODO rename to setNeedNetworkLedger
-    virtual void needNetworkLedger () = 0;
+    virtual void setNeedNetworkLedger () = 0;
     virtual void clearNeedNetworkLedger () = 0;
     virtual bool isNeedNetworkLedger () = 0;
     virtual bool isFull () = 0;
@@ -176,11 +175,9 @@ public:
     virtual void setAmendmentBlocked () = 0;
     virtual void consensusViewChange () = 0;
 
-    // FIXME(NIKB): Remove the need for this function
-    virtual void setLastCloseTime (NetClock::time_point t) = 0;
-
     virtual Json::Value getConsensusInfo () = 0;
-    virtual Json::Value getServerInfo (bool human, bool admin) = 0;
+    virtual Json::Value getServerInfo (
+        bool human, bool admin, bool counters) = 0;
     virtual void clearLedgerFetch () = 0;
     virtual Json::Value getLedgerFetchInfo () = 0;
 
@@ -240,10 +237,11 @@ public:
 //------------------------------------------------------------------------------
 
 std::unique_ptr<NetworkOPs>
-make_NetworkOPs (Application& app, NetworkOPs::clock_type& clock, bool standalone,
-    std::size_t network_quorum, bool start_valid,
-    JobQueue& job_queue, LedgerMaster& ledgerMaster,
-    Stoppable& parent, beast::Journal journal);
+make_NetworkOPs (Application& app, NetworkOPs::clock_type& clock,
+    bool standalone, std::size_t minPeerCount, bool start_valid,
+    JobQueue& job_queue, LedgerMaster& ledgerMaster, Stoppable& parent,
+    ValidatorKeys const & validatorKeys, boost::asio::io_service& io_svc,
+    beast::Journal journal);
 
 } // ripple
 

@@ -34,14 +34,15 @@ namespace ripple {
 // VFALCO NOTE How can both bad and good be set on a hash?
 #define SF_BAD          0x02    // Temporarily bad
 #define SF_SAVED        0x04
-#define SF_RETRY        0x08    // Transaction can be retried
 #define SF_TRUSTED      0x10    // comes from trusted source
 // Private flags, used internally in apply.cpp.
 // Do not attempt to read, set, or reuse.
-#define SF_PRIVATE1     0x100
-#define SF_PRIVATE2     0x200
-#define SF_PRIVATE3     0x400
-#define SF_PRIVATE4     0x800
+#define SF_PRIVATE1     0x0100
+#define SF_PRIVATE2     0x0200
+#define SF_PRIVATE3     0x0400
+#define SF_PRIVATE4     0x0800
+#define SF_PRIVATE5     0x1000
+#define SF_PRIVATE6     0x2000
 
 /** Routing table for objects identified by hash.
 
@@ -64,7 +65,6 @@ private:
         static char const* getCountedObjectName () { return "HashRouterEntry"; }
 
         Entry ()
-            : flags_ (0)
         {
         }
 
@@ -84,9 +84,10 @@ private:
             flags_ |= flagsToSet;
         }
 
-        std::set <PeerShortID>& peekPeers()
+        /** Return set of peers we've relayed to and reset tracking */
+        std::set<PeerShortID> releasePeerSet()
         {
-            return peers_;
+            return std::move(peers_);
         }
 
         /** Determines if this item should be relayed.
@@ -104,12 +105,35 @@ private:
             return true;
         }
 
+        /** Determines if this item should be recovered from the open ledger.
+
+            Counts the number of times the item has been recovered.
+            Every `limit` times the function is called, return false.
+            Else return true.
+
+            @note The limit must be > 0
+        */
+        bool shouldRecover(std::uint32_t limit)
+        {
+            return ++recoveries_ % limit != 0;
+        }
+
+        bool shouldProcess(Stopwatch::time_point now, std::chrono::seconds interval)
+        {
+             if (processed_ && ((*processed_ + interval) > now))
+                 return false;
+             processed_.emplace (now);
+             return true;
+        }
+
     private:
-        int flags_;
+        int flags_ = 0;
         std::set <PeerShortID> peers_;
         // This could be generalized to a map, if more
         // than one flag needs to expire independently.
         boost::optional<Stopwatch::time_point> relayed_;
+        boost::optional<Stopwatch::time_point> processed_;
+        std::uint32_t recoveries_ = 0;
     };
 
 public:
@@ -120,9 +144,16 @@ public:
         return 300s;
     }
 
-    HashRouter (Stopwatch& clock, std::chrono::seconds entryHoldTimeInSeconds)
+    static inline std::uint32_t getDefaultRecoverLimit()
+    {
+        return 1;
+    }
+
+    HashRouter (Stopwatch& clock, std::chrono::seconds entryHoldTimeInSeconds,
+        std::uint32_t recoverLimit)
         : suppressionMap_(clock)
         , holdTime_ (entryHoldTimeInSeconds)
+        , recoverLimit_ (recoverLimit + 1u)
     {
     }
 
@@ -138,6 +169,10 @@ public:
 
     bool addSuppressionPeer (uint256 const& key, PeerShortID peer,
                              int& flags);
+
+    // Add a peer suppression and return whether the entry should be processed
+    bool shouldProcess (uint256 const& key, PeerShortID peer, int& flags,
+        std::chrono::seconds tx_interval);
 
     /** Set the flags on a hash.
 
@@ -161,6 +196,12 @@ public:
     */
     boost::optional<std::set<PeerShortID>> shouldRelay(uint256 const& key);
 
+    /** Determines whether the hashed item should be recovered
+
+        @return `bool` indicates whether the item should be relayed
+    */
+    bool shouldRecover(uint256 const& key);
+
 private:
     // pair.second indicates whether the entry was created
     std::pair<Entry&, bool> emplace (uint256 const&);
@@ -172,6 +213,8 @@ private:
         hardened_hash<strong_hash>> suppressionMap_;
 
     std::chrono::seconds const holdTime_;
+
+    std::uint32_t const recoverLimit_;
 };
 
 } // ripple

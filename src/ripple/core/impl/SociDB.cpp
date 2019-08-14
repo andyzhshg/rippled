@@ -17,9 +17,14 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated"
+#endif
+
 
 #include <ripple/basics/contract.h>
+#include <ripple/basics/ByteUtilities.h>
 #include <ripple/core/ConfigSections.h>
 #include <ripple/core/SociDB.h>
 #include <ripple/core/Config.h>
@@ -125,7 +130,7 @@ size_t getKBUsedAll (soci::session& s)
 {
     if (! getConnection (s))
         Throw<std::logic_error> ("No connection found.");
-    return static_cast <size_t> (sqlite_api::sqlite3_memory_used () / 1024);
+    return static_cast <size_t> (sqlite_api::sqlite3_memory_used () / kilobytes(1));
 }
 
 size_t getKBUsedDB (soci::session& s)
@@ -136,7 +141,7 @@ size_t getKBUsedDB (soci::session& s)
         int cur = 0, hiw = 0;
         sqlite_api::sqlite3_db_status (
             conn, SQLITE_DBSTATUS_CACHE_USED, &cur, &hiw, 0);
-        return cur / 1024;
+        return cur / kilobytes(1);
     }
     Throw<std::logic_error> ("");
     return 0; // Silence compiler warning.
@@ -155,7 +160,6 @@ void convert (soci::blob& from, std::string& to)
     std::vector<std::uint8_t> tmp;
     convert (from, tmp);
     to.assign (tmp.begin (), tmp.end());
-
 }
 
 void convert (std::vector<std::uint8_t> const& from, soci::blob& to)
@@ -226,7 +230,13 @@ private:
             running_ = true;
         }
 
-        jobQueue_.addJob (jtWAL, "WAL", [this] (Job&) { checkpoint(); });
+        // If the Job is not added to the JobQueue then we're not running_.
+        if (! jobQueue_.addJob (
+            jtWAL, "WAL", [this] (Job&) { checkpoint(); }))
+        {
+            std::lock_guard <std::mutex> lock (mutex_);
+            running_ = false;
+        }
     }
 
     void checkpoint ()
@@ -265,3 +275,7 @@ std::unique_ptr <Checkpointer> makeCheckpointer (
 }
 
 }
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

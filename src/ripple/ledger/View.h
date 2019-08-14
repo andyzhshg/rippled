@@ -60,6 +60,10 @@ bool
 isGlobalFrozen (ReadView const& view,
     AccountID const& issuer);
 
+bool
+isFrozen (ReadView const& view, AccountID const& account,
+    Currency const& currency, AccountID const& issuer);
+
 // Returns the amount an account can spend without going into debt.
 //
 // <-- saAmount: amount of currency held by account. May be negative.
@@ -73,6 +77,16 @@ STAmount
 accountFunds (ReadView const& view, AccountID const& id,
     STAmount const& saDefault, FreezeHandling freezeHandling,
         beast::Journal j);
+
+// Return the account's liquid (not reserved) XRP.  Generally prefer
+// calling accountHolds() over this interface.  However this interface
+// allows the caller to temporarily adjust the owner count should that be
+// necessary.
+//
+// @param ownerCountAdj positive to add to count, negative to reduce count.
+XRPAmount
+xrpLiquid (ReadView const& view, AccountID const& id,
+    std::int32_t ownerCountAdj, beast::Journal j);
 
 /** Iterate all items in an account's owner directory. */
 void
@@ -186,7 +200,7 @@ bool areCompatible (uint256 const& validHash, LedgerIndex validIndex,
 void
 adjustOwnerCount (ApplyView& view,
     std::shared_ptr<SLE> const& sle,
-        int amount, beast::Journal j);
+        std::int32_t amount, beast::Journal j);
 
 // Return the first entry and advance uDirEntry.
 // <-- true, if had a next entry.
@@ -213,39 +227,13 @@ dirNext (ApplyView& view,
 std::function<void (SLE::ref)>
 describeOwnerDir(AccountID const& account);
 
-// <--     uNodeDir: For deletion, present to make dirDelete efficient.
-// -->   uRootIndex: The index of the base of the directory.  Nodes are based off of this.
-// --> uLedgerIndex: Value to add to directory.
-// Only append. This allow for things that watch append only structure to just monitor from the last node on ward.
-// Within a node with no deletions order of elements is sequential.  Otherwise, order of elements is random.
-
-/** Add an entry to directory, creating the directory if necessary
-
-    @param uNodeDir node of entry - makes deletion efficient
-    @param uRootIndex The index of the base of the directory.
-                      Nodes are based off of this.
-    @param uLedgerIndex Value to add to directory.
-
-    @return a pair containing a code indicating success or
-            failure, and if successful, a boolean indicating
-            whether the directory was just created.
-*/
-std::pair<TER, bool>
+// deprecated
+boost::optional<std::uint64_t>
 dirAdd (ApplyView& view,
-    std::uint64_t&                      uNodeDir,      // Node of entry.
     Keylet const&                       uRootIndex,
     uint256 const&                      uLedgerIndex,
+    bool                                strictOrder,
     std::function<void (SLE::ref)>      fDescriber,
-    beast::Journal j);
-
-TER
-dirDelete (ApplyView& view,
-    const bool           bKeepRoot,
-    const std::uint64_t& uNodeDir,      // Node item is mentioned in.
-    uint256 const&       uRootIndex,
-    uint256 const&       uLedgerIndex,  // Item being deleted
-    const bool           bStable,
-    const bool           bSoft,
     beast::Journal j);
 
 // VFALCO NOTE Both STAmount parameters should just
@@ -335,18 +323,20 @@ transferXRP (ApplyView& view,
             STAmount const& amount,
                 beast::Journal j);
 
-NetClock::time_point const& amendmentRIPD1141SoTime ();
-bool amendmentRIPD1141 (NetClock::time_point const closeTime);
+NetClock::time_point const& fix1141Time ();
+bool fix1141 (NetClock::time_point const closeTime);
 
-NetClock::time_point const& amendmentRIPD1141SoTime ();
-bool amendmentRIPD1141 (NetClock::time_point const closeTime);
+NetClock::time_point const& fix1274Time ();
+bool fix1274 (NetClock::time_point const closeTime);
 
-NetClock::time_point const& amendmentRIPD1274SoTime ();
-bool amendmentRIPD1274 (NetClock::time_point const closeTime);
+NetClock::time_point const& fix1298Time ();
+bool fix1298 (NetClock::time_point const closeTime);
 
-NetClock::time_point const& amendmentRIPD1274SoTime ();
-bool amendmentRIPD1274 (NetClock::time_point const closeTime);
+NetClock::time_point const& fix1443Time ();
+bool fix1443 (NetClock::time_point const closeTime);
 
+NetClock::time_point const& fix1449Time ();
+bool fix1449 (NetClock::time_point const closeTime);
 
 } // ripple
 

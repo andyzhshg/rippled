@@ -18,7 +18,11 @@
 //==============================================================================
 
 #include <ripple/app/ledger/LedgerToJson.h>
+#include <ripple/app/misc/TxQ.h>
 #include <ripple/basics/base_uint.h>
+#include <ripple/basics/date.h>
+#include <ripple/rpc/Context.h>
+#include <ripple/rpc/DeliveredAmount.h>
 
 namespace ripple {
 
@@ -50,7 +54,7 @@ void fillJson(Object& json, bool closed, LedgerInfo const& info, bool bFull)
     {
         json[jss::closed] = true;
     }
-    else if (!bFull)
+    else if (! bFull)
     {
         json[jss::closed] = false;
         return;
@@ -81,6 +85,80 @@ void fillJson(Object& json, bool closed, LedgerInfo const& info, bool bFull)
 }
 
 template <class Object>
+void fillJsonBinary(Object& json, bool closed, LedgerInfo const& info)
+{
+    if (! closed)
+        json[jss::closed] = false;
+    else
+    {
+        json[jss::closed] = true;
+
+        Serializer s;
+        addRaw (info, s);
+        json[jss::ledger_data] = strHex (s.peekData ());
+    }
+}
+
+Json::Value
+fillJsonTx(
+    LedgerFill const& fill,
+    bool bBinary,
+    bool bExpanded,
+    std::shared_ptr<STTx const> const& txn,
+    std::shared_ptr<STObject const> const& stMeta)
+{
+    if (!bExpanded)
+        return to_string(txn->getTransactionID());
+
+    Json::Value txJson{Json::objectValue};
+    auto const txnType = txn->getTxnType();
+    if (bBinary)
+    {
+        txJson[jss::tx_blob] = serializeHex(*txn);
+        if (stMeta)
+            txJson[jss::meta] = serializeHex(*stMeta);
+    }
+    else
+    {
+        copyFrom(txJson, txn->getJson(JsonOptions::none));
+        if (stMeta)
+        {
+            txJson[jss::metaData] = stMeta->getJson(JsonOptions::none);
+            if (txnType == ttPAYMENT || txnType == ttCHECK_CASH)
+            {
+                // Insert delivered amount
+                auto txMeta = std::make_shared<TxMeta>(
+                    txn->getTransactionID(), fill.ledger.seq(), *stMeta);
+                RPC::insertDeliveredAmount(
+                    txJson[jss::metaData], fill.ledger, txn, *txMeta);
+            }
+        }
+    }
+
+    if ((fill.options & LedgerFill::ownerFunds) &&
+        txn->getTxnType() == ttOFFER_CREATE)
+    {
+        auto const account = txn->getAccountID(sfAccount);
+        auto const amount = txn->getFieldAmount(sfTakerGets);
+
+        // If the offer create is not self funded then add the
+        // owner balance
+        if (account != amount.getIssuer())
+        {
+            auto const ownerFunds = accountFunds(
+                fill.ledger,
+                account,
+                amount,
+                fhIGNORE_FREEZE,
+                beast::Journal{beast::Journal::getNullSink()});
+            txJson[jss::owner_funds] = ownerFunds.getText();
+        }
+    }
+
+    return txJson;
+}
+
+template <class Object>
 void fillJsonTx (Object& json, LedgerFill const& fill)
 {
     auto&& txns = setArray (json, jss::transactions);
@@ -91,42 +169,7 @@ void fillJsonTx (Object& json, LedgerFill const& fill)
     {
         for (auto& i: fill.ledger.txs)
         {
-            if (! bExpanded)
-            {
-                txns.append(to_string(i.first->getTransactionID()));
-            }
-            else
-            {
-                auto&& txJson = appendObject(txns);
-                if (bBinary)
-                {
-                    txJson[jss::tx_blob] = serializeHex(*i.first);
-                    if (i.second)
-                        txJson[jss::meta] = serializeHex(*i.second);
-                }
-                else
-                {
-                    copyFrom(txJson, i.first->getJson(0));
-                    if (i.second)
-                        txJson[jss::metaData] = i.second->getJson(0);
-                }
-
-                if ((fill.options & LedgerFill::ownerFunds) &&
-                    i.first->getTxnType() == ttOFFER_CREATE)
-                {
-                    auto const account = i.first->getAccountID(sfAccount);
-                    auto const amount = i.first->getFieldAmount(sfTakerGets);
-
-                    // If the offer create is not self funded then add the
-                    // owner balance
-                    if (account != amount.getIssuer())
-                    {
-                        auto const ownerFunds = accountFunds(fill.ledger,
-                            account, amount, fhIGNORE_FREEZE, beast::Journal());
-                        txJson[jss::owner_funds] = ownerFunds.getText ();
-                    }
-                }
-            }
+            txns.append(fillJsonTx(fill, bBinary, bExpanded, i.first, i.second));
         }
     }
     catch (std::exception const&)
@@ -145,16 +188,54 @@ void fillJsonState(Object& json, LedgerFill const& fill)
 
     for(auto const& sle : ledger.sles)
     {
-        if (binary)
+        if (fill.type == ltINVALID || sle->getType () == fill.type)
         {
-            auto&& obj = appendObject(array);
-            obj[jss::hash] = to_string(sle->key());
-            obj[jss::tx_blob] = serializeHex(*sle);
+            if (binary)
+            {
+                auto&& obj = appendObject(array);
+                obj[jss::hash] = to_string(sle->key());
+                obj[jss::tx_blob] = serializeHex(*sle);
+            }
+            else if (expanded)
+                array.append(sle->getJson(JsonOptions::none));
+            else
+                array.append(to_string(sle->key()));
         }
-        else if (expanded)
-            array.append(sle->getJson(0));
-        else
-            array.append(to_string(sle->key()));
+    }
+}
+
+template <class Object>
+void fillJsonQueue(Object& json, LedgerFill const& fill)
+{
+    auto&& queueData = Json::setArray(json, jss::queue_data);
+    auto bBinary = isBinary(fill);
+    auto bExpanded = isExpanded(fill);
+
+    for (auto const& tx : fill.txQueue)
+    {
+        auto&& txJson = appendObject(queueData);
+        txJson[jss::fee_level] = to_string(tx.feeLevel);
+        if (tx.lastValid)
+            txJson[jss::LastLedgerSequence] = *tx.lastValid;
+        if (tx.consequences)
+        {
+            txJson[jss::fee] = to_string(
+                tx.consequences->fee);
+            auto spend = tx.consequences->potentialSpend +
+                tx.consequences->fee;
+            txJson[jss::max_spend_drops] = to_string(spend);
+            auto authChanged = tx.consequences->category ==
+                TxConsequences::blocker;
+            txJson[jss::auth_change] = authChanged;
+        }
+
+        txJson[jss::account] = to_string(tx.account);
+        txJson["retries_remaining"] = tx.retriesRemaining;
+        txJson["preflight_result"] = transToken(tx.preflightResult);
+        if (tx.lastResult)
+            txJson["last_result"] = transToken(*tx.lastResult);
+
+        txJson[jss::tx] = fillJsonTx(fill, bBinary, bExpanded, tx.txn, nullptr);
     }
 }
 
@@ -164,7 +245,10 @@ void fillJson (Object& json, LedgerFill const& fill)
     // TODO: what happens if bBinary and bExtracted are both set?
     // Is there a way to report this back?
     auto bFull = isFull(fill);
-    fillJson(json, !fill.ledger.open(), fill.ledger.info(), bFull);
+    if (isBinary(fill))
+        fillJsonBinary(json, ! fill.ledger.open(), fill.ledger.info());
+    else
+        fillJson(json, ! fill.ledger.open(), fill.ledger.info(), bFull);
 
     if (bFull || fill.options & LedgerFill::dumpTxrp)
         fillJsonTx(json, fill);
@@ -175,17 +259,13 @@ void fillJson (Object& json, LedgerFill const& fill)
 
 } // namespace
 
-void addJson (Json::Object& json, LedgerFill const& fill)
-{
-    auto&& object = Json::addObject (json, jss::ledger);
-    fillJson (object, fill);
-}
-
 void addJson (Json::Value& json, LedgerFill const& fill)
 {
     auto&& object = Json::addObject (json, jss::ledger);
     fillJson (object, fill);
 
+    if ((fill.options & LedgerFill::dumpQueue) && !fill.txQueue.empty())
+        fillJsonQueue(json, fill);
 }
 
 Json::Value getJson (LedgerFill const& fill)

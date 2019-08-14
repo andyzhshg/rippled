@@ -17,10 +17,9 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/test/jtx.h>
+#include <test/jtx.h>
 #include <ripple/protocol/Feature.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 
 namespace ripple {
 namespace test {
@@ -40,25 +39,29 @@ struct SetAuth_test : public beast::unit_test::suite
         Json::Value jv;
         jv[jss::Account] = account.human();
         jv[jss::LimitAmount] = STAmount(
-            { to_currency(currency), dest }).getJson(0);
-        jv[jss::TransactionType] = "TrustSet";
+            { to_currency(currency), dest }).getJson(JsonOptions::none);
+        jv[jss::TransactionType] = jss::TrustSet;
         jv[jss::Flags] = tfSetfAuth;
         return jv;
     }
 
-    void testAuth()
+    void testAuth(FeatureBitset features)
     {
+        // featureTrustSetAuth should always be reset by the caller.
+        BEAST_EXPECT(!features[featureTrustSetAuth]);
+
         using namespace jtx;
         auto const gw = Account("gw");
         auto const USD = gw["USD"];
         {
-            Env env(*this);
+            Env env(*this, features);
             env.fund(XRP(100000), "alice", gw);
             env(fset(gw, asfRequireAuth));
             env(auth(gw, "alice", "USD"),       ter(tecNO_LINE_REDUNDANT));
         }
         {
-            Env env(*this, features(featureTrustSetAuth));
+            Env env(*this, features | featureTrustSetAuth);
+
             env.fund(XRP(100000), "alice", "bob", gw);
             env(fset(gw, asfRequireAuth));
             env(auth(gw, "alice", "USD"));
@@ -75,7 +78,12 @@ struct SetAuth_test : public beast::unit_test::suite
 
     void run() override
     {
-        testAuth();
+        using namespace jtx;
+        auto const sa = supported_amendments();
+        testAuth(sa - featureTrustSetAuth - featureFlow - fix1373 - featureFlowCross);
+        testAuth(sa - featureTrustSetAuth - fix1373 - featureFlowCross);
+        testAuth(sa - featureTrustSetAuth - featureFlowCross);
+        testAuth(sa - featureTrustSetAuth);
     }
 };
 

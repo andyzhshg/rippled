@@ -22,7 +22,7 @@
 
 #include <ripple/basics/contract.h>
 #include <beast/unit_test/detail/const_container.hpp>
-#include <beast/core/detail/ci_char_traits.hpp>
+#include <boost/beast/core/string.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/optional.hpp>
 #include <map>
@@ -41,7 +41,7 @@ using IniFileSections = std::map<std::string, std::vector<std::string>>;
 */
 class Section
     : public beast::unit_test::detail::const_container <
-        std::map <std::string, std::string, beast::detail::ci_less>>
+        std::map <std::string, std::string, boost::beast::iless>>
 {
 private:
     std::string name_;
@@ -87,10 +87,7 @@ public:
         if (lines_.empty ())
             lines_.emplace_back (std::move (value));
         else
-        {
-            assert (lines_.size () == 1);
             lines_[0] = std::move (value);
-        }
     }
 
     /**
@@ -104,7 +101,7 @@ public:
     {
         if (lines_.empty ())
             return "";
-        else if (lines_.size () > 1)
+        if (lines_.size () > 1)
             Throw<std::runtime_error> (
                 "A legacy value must have exactly one line. Section: " + name_);
         return lines_[0];
@@ -151,6 +148,17 @@ public:
         return boost::lexical_cast<T>(iter->second);
     }
 
+    /// Returns a value if present, else another value.
+    template<class T>
+    T
+    value_or(std::string const& name, T const& other) const
+    {
+        auto const iter = cont().find(name);
+        if (iter == cont().end())
+            return other;
+        return boost::lexical_cast<T>(iter->second);
+    }
+
     friend
     std::ostream&
     operator<< (std::ostream&, Section const& section);
@@ -165,7 +173,7 @@ public:
 class BasicConfig
 {
 private:
-    std::map <std::string, Section, beast::detail::ci_less> map_;
+    std::map <std::string, Section, boost::beast::iless> map_;
 
 public:
     /** Returns `true` if a section with the given name exists. */

@@ -22,7 +22,7 @@
 
 #include <ripple/basics/CountedObject.h>
 #include <ripple/json/json_value.h>
-#include <ripple/overlay/impl/Manifest.h>
+#include <ripple/app/misc/Manifest.h>
 #include <ripple/resource/Consumer.h>
 #include <ripple/protocol/Book.h>
 #include <ripple/core/Stoppable.h>
@@ -115,6 +115,7 @@ public:
         //
         virtual pointer findRpcSub (std::string const& strUrl) = 0;
         virtual pointer addRpcSub (std::string const& strUrl, ref rspEntry) = 0;
+        virtual bool tryRemoveRpcSub (std::string const& strUrl) = 0;
     };
 
 public:

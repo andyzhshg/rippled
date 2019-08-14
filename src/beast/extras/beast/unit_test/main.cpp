@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013-2016 Vinnie Falco (vinnie dot falco at gmail dot com)
+// Copyright (c) 2013-2017 Vinnie Falco (vinnie dot falco at gmail dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,12 +11,13 @@
 #include <beast/unit_test/match.hpp>
 #include <beast/unit_test/reporter.hpp>
 #include <beast/unit_test/suite.hpp>
+#include <boost/config.hpp>
 #include <boost/program_options.hpp>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
 
-#ifdef _MSC_VER
+#ifdef BOOST_MSVC
 # ifndef WIN32_LEAN_AND_MEAN // VC_EXTRALEAN
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
@@ -33,7 +34,7 @@ static
 std::string
 prefix(suite_info const& s)
 {
-    if (s.manual())
+    if(s.manual())
         return "|M| ";
     return "    ";
 }
@@ -45,7 +46,7 @@ print(std::ostream& os, suite_list const& c)
     std::size_t manual = 0;
     for(auto const& s : c)
     {
-        os << prefix (s) << s.full_name() << '\n';
+        os << prefix(s) << s.full_name() << '\n';
         if(s.manual())
             ++manual;
     }
@@ -78,20 +79,20 @@ int main(int ac, char const* av[])
     using namespace std;
     using namespace beast::unit_test;
 
-#ifdef _MSC_VER
+#if BOOST_MSVC
     {
-        int flags = _CrtSetDbgFlag (_CRTDBG_REPORT_FLAG);
+        int flags = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
         flags |= _CRTDBG_LEAK_CHECK_DF;
-        _CrtSetDbgFlag (flags);
+        _CrtSetDbgFlag(flags);
     }
 #endif
 
     namespace po = boost::program_options;
     po::options_description desc("Options");
     desc.add_options()
-        ("help,h",  "Produce a help message")
-        ("print,r", "Print the list of available test suites")
-        ("suites,s", po::value<string>(), "suites to run")
+       ("help,h",  "Produce a help message")
+       ("print,p", "Print the list of available test suites")
+       ("suites,s", po::value<string>(), "suites to run")
         ;
 
     po::positional_options_description p;
@@ -99,7 +100,8 @@ int main(int ac, char const* av[])
     po::store(po::parse_command_line(ac, av, desc), vm);
     po::notify(vm);
 
-    dstream log;
+    dstream log(std::cerr);
+    std::unitbuf(log);
 
     if(vm.count("help"))
     {
@@ -121,7 +123,7 @@ int main(int ac, char const* av[])
                 match_auto(suites));
         else
             failed = r.run_each(global_suites());
-        if (failed)
+        if(failed)
             return EXIT_FAILURE;
         return EXIT_SUCCESS;
     }

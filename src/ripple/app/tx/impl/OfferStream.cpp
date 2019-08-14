@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/tx/impl/OfferStream.h>
 #include <ripple/basics/Log.h>
 
@@ -43,7 +42,7 @@ template<class TIn, class TOut>
 void
 TOfferStreamBase<TIn, TOut>::erase (ApplyView& view)
 {
-    // NIKB NOTE This should be using ApplyView::dirDelete, which would
+    // NIKB NOTE This should be using ApplyView::dirRemove, which would
     //           correctly remove the directory if its the last entry.
     //           Unfortunately this is a protocol breaking change.
 
@@ -152,8 +151,8 @@ TOfferStreamBase<TIn, TOut>::step ()
             tp{d{(*entry)[sfExpiration]}} <= expire_)
         {
             JLOG(j_.trace()) <<
-                "Removing expired offer " << entry->getIndex();
-                permRmOffer (entry);
+                "Removing expired offer " << entry->key();
+                permRmOffer (entry->key());
             continue;
         }
 
@@ -165,8 +164,8 @@ TOfferStreamBase<TIn, TOut>::step ()
         if (amount.empty())
         {
             JLOG(j_.warn()) <<
-                "Removing bad offer " << entry->getIndex();
-            permRmOffer (entry);
+                "Removing bad offer " << entry->key();
+            permRmOffer (entry->key());
             offer_ = TOffer<TIn, TOut>{};
             continue;
         }
@@ -176,7 +175,7 @@ TOfferStreamBase<TIn, TOut>::step ()
             offer_.issueOut (), fhZERO_IF_FROZEN, j_);
 
         // Check for unfunded offer
-        if (*ownerFunds_ <= zero)
+        if (*ownerFunds_ <= beast::zero)
         {
             // If the owner's balance in the pristine view is the same,
             // we haven't modified the balance and therefore the
@@ -187,14 +186,14 @@ TOfferStreamBase<TIn, TOut>::step ()
 
             if (original_funds == *ownerFunds_)
             {
-                permRmOffer (entry);
+                permRmOffer (entry->key());
                 JLOG(j_.trace()) <<
-                    "Removing unfunded offer " << entry->getIndex();
+                    "Removing unfunded offer " << entry->key();
             }
             else
             {
                 JLOG(j_.trace()) <<
-                    "Removing became unfunded offer " << entry->getIndex();
+                    "Removing became unfunded offer " << entry->key();
             }
             offer_ = TOffer<TIn, TOut>{};
             continue;
@@ -207,16 +206,16 @@ TOfferStreamBase<TIn, TOut>::step ()
 }
 
 void
-OfferStream::permRmOffer (std::shared_ptr<SLE> const& sle)
+OfferStream::permRmOffer (uint256 const& offerIndex)
 {
     offerDelete (cancelView_,
-                 cancelView_.peek(keylet::offer(sle->key())), j_);
+                 cancelView_.peek(keylet::offer(offerIndex)), j_);
 }
 
 template<class TIn, class TOut>
-void FlowOfferStream<TIn, TOut>::permRmOffer (std::shared_ptr<SLE> const& sle)
+void FlowOfferStream<TIn, TOut>::permRmOffer (uint256 const& offerIndex)
 {
-    permToRemove_.insert (sle->key());
+    permToRemove_.insert (offerIndex);
 }
 
 template class FlowOfferStream<STAmount, STAmount>;

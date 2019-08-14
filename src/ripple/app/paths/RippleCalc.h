@@ -46,6 +46,8 @@ class RippleCalc
 public:
     struct Input
     {
+        explicit Input() = default;
+
         bool partialPaymentAllowed = false;
         bool defaultPathsAllowed = true;
         bool limitQuality = false;
@@ -53,6 +55,8 @@ public:
     };
     struct Output
     {
+        explicit Output() = default;
+
         // The computed input amount.
         STAmount actualAmountIn;
 
@@ -107,7 +111,6 @@ public:
         // explore for liquidity.
         STPathSet const& spsPaths,
         Logs& l,
-        Config const& config,
         Input const* const pInputs = nullptr);
 
     // The view we are currently working on

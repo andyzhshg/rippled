@@ -17,22 +17,21 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/protocol/STTx.h>
+#include <ripple/basics/contract.h>
+#include <ripple/basics/Log.h>
+#include <ripple/basics/safe_cast.h>
+#include <ripple/basics/StringUtilities.h>
 #include <ripple/protocol/HashPrefix.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/protocol/PublicKey.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/protocol/Protocol.h>
+#include <ripple/protocol/PublicKey.h>
 #include <ripple/protocol/Sign.h>
 #include <ripple/protocol/STAccount.h>
 #include <ripple/protocol/STArray.h>
 #include <ripple/protocol/TxFlags.h>
-#include <ripple/protocol/types.h>
-#include <ripple/basics/contract.h>
-#include <ripple/basics/Log.h>
-#include <ripple/basics/StringUtilities.h>
+#include <ripple/protocol/UintTypes.h>
 #include <ripple/json/to_string.h>
-#include <ripple/beast/unit_test.h>
 #include <boost/format.hpp>
 #include <array>
 #include <memory>
@@ -51,37 +50,34 @@ auto getTxFormat (TxType type)
         Throw<std::runtime_error> (
             "Invalid transaction type " +
             std::to_string (
-                static_cast<std::underlying_type_t<TxType>>(type)));
+                safe_cast<std::underlying_type_t<TxType>>(type)));
     }
 
     return format;
 }
 
-STTx::STTx (STObject&& object)
+STTx::STTx (STObject&& object) noexcept (false)
     : STObject (std::move (object))
 {
-    tx_type_ = static_cast <TxType> (getFieldU16 (sfTransactionType));
-
-    if (!setType (getTxFormat (tx_type_)->elements))
-        Throw<std::runtime_error> ("transaction not valid");
-
+    tx_type_ = safe_cast<TxType> (getFieldU16 (sfTransactionType));
+    applyTemplate (getTxFormat (tx_type_)->getSOTemplate());  //  may throw
     tid_ = getHash(HashPrefix::transactionID);
 }
 
-STTx::STTx (SerialIter& sit)
+STTx::STTx (SerialIter& sit) noexcept (false)
     : STObject (sfTransaction)
 {
     int length = sit.getBytesLeft ();
 
-    if ((length < Protocol::txMinSizeBytes) || (length > Protocol::txMaxSizeBytes))
+    if ((length < txMinSizeBytes) || (length > txMaxSizeBytes))
         Throw<std::runtime_error> ("Transaction length invalid");
 
-    set (sit);
-    tx_type_ = static_cast<TxType> (getFieldU16 (sfTransactionType));
+    if (set (sit))
+        Throw<std::runtime_error> ("Transaction contains an object terminator");
 
-    if (!setType (getTxFormat (tx_type_)->elements))
-        Throw<std::runtime_error> ("transaction not valid");
+    tx_type_ = safe_cast<TxType> (getFieldU16 (sfTransactionType));
 
+    applyTemplate (getTxFormat (tx_type_)->getSOTemplate());  // May throw
     tid_ = getHash(HashPrefix::transactionID);
 }
 
@@ -92,12 +88,12 @@ STTx::STTx (
 {
     auto format = getTxFormat (type);
 
-    set (format->elements);
+    set (format->getSOTemplate());
     setFieldU16 (sfTransactionType, format->getType ());
 
     assembler (*this);
 
-    tx_type_ = static_cast<TxType>(getFieldU16 (sfTransactionType));
+    tx_type_ = safe_cast<TxType>(getFieldU16 (sfTransactionType));
 
     if (tx_type_ != type)
         LogicError ("Transaction type was mutated during assembly");
@@ -207,14 +203,14 @@ std::pair<bool, std::string> STTx::checkSign(bool allowMultiSign) const
     return ret;
 }
 
-Json::Value STTx::getJson (int) const
+Json::Value STTx::getJson (JsonOptions) const
 {
-    Json::Value ret = STObject::getJson (0);
+    Json::Value ret = STObject::getJson (JsonOptions::none);
     ret[jss::hash] = to_string (getTransactionID ());
     return ret;
 }
 
-Json::Value STTx::getJson (int options, bool binary) const
+Json::Value STTx::getJson (JsonOptions options, bool binary) const
 {
     if (binary)
     {
@@ -242,7 +238,7 @@ std::string STTx::getMetaSQL (std::uint32_t inLedger,
 {
     Serializer s;
     add (s);
-    return getMetaSQL (s, inLedger, TXN_SQL_VALIDATED, escapedMetaData);
+    return getMetaSQL (s, inLedger, txnSqlValidated, escapedMetaData);
 }
 
 // VFALCO This could be a free function elsewhere
@@ -505,6 +501,11 @@ bool passesLocalChecks (STObject const& st, std::string& reason)
         return false;
     }
 
+    if (isPseudoTx(st))
+    {
+        reason = "Cannot submit pseudo transactions.";
+        return false;
+    }
     return true;
 }
 
@@ -515,6 +516,16 @@ sterilize (STTx const& stx)
     stx.add(s);
     SerialIter sit(s.slice());
     return std::make_shared<STTx const>(std::ref(sit));
+}
+
+bool
+isPseudoTx(STObject const& tx)
+{
+    auto t = tx[~sfTransactionType];
+    if (!t)
+        return false;
+    auto tt = safe_cast<TxType>(*t);
+    return tt == ttAMENDMENT || tt == ttFEE;
 }
 
 } // ripple

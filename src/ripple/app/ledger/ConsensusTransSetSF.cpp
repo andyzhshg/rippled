@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/ledger/ConsensusTransSetSF.h>
 #include <ripple/app/ledger/TransactionMaster.h>
 #include <ripple/app/main/Application.h>
@@ -38,9 +37,9 @@ ConsensusTransSetSF::ConsensusTransSetSF (Application& app, NodeCache& nodeCache
 {
 }
 
-void ConsensusTransSetSF::gotNode (
-    bool fromFilter, SHAMapHash const& nodeHash,
-    Blob&& nodeData, SHAMapTreeNode::TNType type) const
+void
+ConsensusTransSetSF::gotNode(bool fromFilter, SHAMapHash const& nodeHash,
+    std::uint32_t, Blob&& nodeData, SHAMapTreeNode::TNType type) const
 {
     if (fromFilter)
         return;
@@ -75,11 +74,12 @@ void ConsensusTransSetSF::gotNode (
     }
 }
 
-bool ConsensusTransSetSF::haveNode (
-    SHAMapHash const& nodeHash, Blob& nodeData) const
+boost::optional<Blob>
+ConsensusTransSetSF::getNode (SHAMapHash const& nodeHash) const
 {
+    Blob nodeData;
     if (m_nodeCache.retrieve (nodeHash, nodeData))
-        return true;
+        return nodeData;
 
     auto txn = app_.getMasterTransaction().fetch(nodeHash.as_uint256(), false);
 
@@ -93,10 +93,10 @@ bool ConsensusTransSetSF::haveNode (
         txn->getSTransaction ()->add (s);
         assert(sha512Half(s.slice()) == nodeHash.as_uint256());
         nodeData = s.peekData ();
-        return true;
+        return nodeData;
     }
 
-    return false;
+    return boost::none;
 }
 
 } // ripple

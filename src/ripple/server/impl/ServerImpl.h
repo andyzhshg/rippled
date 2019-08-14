@@ -25,7 +25,6 @@
 #include <ripple/server/impl/Door.h>
 #include <ripple/server/impl/io_list.h>
 #include <ripple/beast/core/List.h>
-#include <ripple/beast/core/Thread.h>
 #include <boost/asio.hpp>
 #include <boost/optional.hpp>
 #include <array>
@@ -33,6 +32,8 @@
 #include <mutex>
 
 namespace ripple {
+
+using Endpoints = std::vector<boost::asio::ip::tcp::endpoint>;
 
 /** A multi-protocol server.
 
@@ -59,7 +60,7 @@ public:
         This may only be called once.
     */
     virtual
-    void
+    Endpoints
     ports (std::vector<Port> const& v) = 0;
 
     /** Close the server.
@@ -86,8 +87,6 @@ private:
         historySize = 100
     };
 
-    using Doors = std::vector <std::shared_ptr<Door<Handler>>>;
-
     Handler& handler_;
     beast::Journal j_;
     boost::asio::io_service& io_service_;
@@ -99,7 +98,7 @@ private:
     std::vector<std::weak_ptr<Door<Handler>>> list_;
     int high_ = 0;
     std::array <std::size_t, 64> hist_;
-    
+
     io_list ios_;
 
 public:
@@ -114,7 +113,7 @@ public:
         return j_;
     }
 
-    void
+    Endpoints
     ports (std::vector<Port> const& ports) override;
 
     void
@@ -164,26 +163,27 @@ ServerImpl<Handler>::
 }
 
 template<class Handler>
-void
+Endpoints
 ServerImpl<Handler>::
 ports (std::vector<Port> const& ports)
 {
     if (closed())
         Throw<std::logic_error> ("ports() on closed Server");
     ports_.reserve(ports.size());
+    Endpoints eps;
+    eps.reserve(ports.size());
     for(auto const& port : ports)
     {
-        if (! port.websockets())
+        ports_.push_back(port);
+        if(auto sp = ios_.emplace<Door<Handler>>(handler_,
+            io_service_, ports_.back(), j_))
         {
-            ports_.push_back(port);
-            if(auto sp = ios_.emplace<Door<Handler>>(handler_,
-                io_service_, ports_.back(), j_))
-            {
-                list_.push_back(sp);
-                sp->run();
-            }
+            list_.push_back(sp);
+            eps.push_back(sp->get_endpoint());
+            sp->run();
         }
     }
+    return eps;
 }
 
 template<class Handler>

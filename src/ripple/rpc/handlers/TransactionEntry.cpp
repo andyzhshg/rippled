@@ -17,10 +17,9 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/ledger/ReadView.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/rpc/Context.h>
 #include <ripple/rpc/impl/RPCHelpers.h>
 
@@ -35,18 +34,17 @@ namespace ripple {
 // means any ledger.
 Json::Value doTransactionEntry (RPC::Context& context)
 {
-    std::shared_ptr <ReadView const>     lpLedger;
+    std::shared_ptr<ReadView const> lpLedger;
     Json::Value jvResult = RPC::lookupLedger (lpLedger, context);
 
-    if (!lpLedger)
+    if(! lpLedger)
         return jvResult;
 
-    if (!context.params.isMember (jss::tx_hash))
+    if(! context.params.isMember (jss::tx_hash))
     {
-        jvResult[jss::error]   = "fieldNotFoundTransaction";
+        jvResult[jss::error] = "fieldNotFoundTransaction";
     }
-    else if (!context.params.isMember (jss::ledger_hash)
-             && !context.params.isMember (jss::ledger_index))
+    else if(jvResult.get(jss::ledger_hash, Json::nullValue).isNull())
     {
         // We don't work on ledger current.
 
@@ -60,28 +58,20 @@ Json::Value doTransactionEntry (RPC::Context& context)
         // routine, returning success or failure.
         uTransID.SetHex (context.params[jss::tx_hash].asString ());
 
-        if (!lpLedger)
+        auto tx = lpLedger->txRead (uTransID);
+        if(! tx.first)
         {
-            jvResult[jss::error]   = "ledgerNotFound";
+            jvResult[jss::error]   = "transactionNotFound";
         }
         else
         {
-            TxMeta::pointer tmTrans;
-
-            auto tx = lpLedger->txRead (uTransID);
-            if (!tx.first)
-            {
-                jvResult[jss::error]   = "transactionNotFound";
-            }
-            else
-            {
-                jvResult[jss::tx_json]     = tx.first->getJson (0);
-                if (tx.second)
-                    jvResult[jss::metadata]    = tx.second->getJson (0);
-                // 'accounts'
-                // 'engine_...'
-                // 'ledger_...'
-            }
+            jvResult[jss::tx_json] = tx.first->getJson (JsonOptions::none);
+            if (tx.second)
+                jvResult[jss::metadata] =
+                    tx.second->getJson (JsonOptions::none);
+            // 'accounts'
+            // 'engine_...'
+            // 'ledger_...'
         }
     }
 

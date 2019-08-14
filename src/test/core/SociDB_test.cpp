@@ -17,12 +17,11 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 
 #include <ripple/core/ConfigSections.h>
 #include <ripple/core/SociDB.h>
 #include <ripple/basics/contract.h>
-#include <ripple/basics/TestSuite.h>
+#include <test/jtx/TestSuite.h>
 #include <ripple/basics/BasicConfig.h>
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
@@ -368,7 +367,7 @@ public:
         testSQLiteSelect ();
         testSQLiteDeleteWithSubselect();
     }
-    void run ()
+    void run () override
     {
         testSQLite ();
     }

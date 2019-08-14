@@ -17,13 +17,13 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
+#include <ripple/protocol/STLedgerEntry.h>
 #include <ripple/basics/contract.h>
 #include <ripple/basics/Log.h>
+#include <ripple/basics/safe_cast.h>
 #include <ripple/json/to_string.h>
 #include <ripple/protocol/Indexes.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/protocol/STLedgerEntry.h>
+#include <ripple/protocol/jss.h>
 #include <boost/format.hpp>
 
 namespace ripple {
@@ -32,68 +32,67 @@ STLedgerEntry::STLedgerEntry (Keylet const& k)
     :  STObject(sfLedgerEntry)
     , key_ (k.key)
     , type_ (k.type)
-    , mMutable (true)
 {
-    mFormat =
+    if (!(0u <= type_ &&
+        type_ <= std::min<unsigned>(std::numeric_limits<std::uint16_t>::max(),
+        std::numeric_limits<std::underlying_type_t<LedgerEntryType>>::max())))
+            Throw<std::runtime_error> ("invalid ledger entry type: out of range");
+    auto const format =
         LedgerFormats::getInstance().findByType (type_);
-    if (mFormat == nullptr)
+
+    if (format == nullptr)
         Throw<std::runtime_error> ("invalid ledger entry type");
-    set (mFormat->elements);
+
+    set (format->getSOTemplate());
+
     setFieldU16 (sfLedgerEntryType,
-        static_cast <std::uint16_t> (mFormat->getType ()));
+        static_cast <std::uint16_t> (type_));
 }
 
 STLedgerEntry::STLedgerEntry (
-    SerialIter& sit, uint256 const& index)
-    : STObject (sfLedgerEntry), key_ (index), mMutable (true)
+        SerialIter& sit,
+        uint256 const& index)
+    : STObject (sfLedgerEntry)
+    , key_ (index)
 {
     set (sit);
     setSLEType ();
 }
 
 STLedgerEntry::STLedgerEntry (
-    const Serializer& s, uint256 const& index)
-    : STObject (sfLedgerEntry), key_ (index), mMutable (true)
-{
-    SerialIter sit (s.slice());
-    set (sit);
-    setSLEType ();
-}
-
-STLedgerEntry::STLedgerEntry (
-    const STObject & object, uint256 const& index)
-    : STObject (object), key_(index),  mMutable (true)
+        STObject const& object,
+        uint256 const& index)
+    : STObject (object)
+    , key_ (index)
 {
     setSLEType ();
 }
 
 void STLedgerEntry::setSLEType ()
 {
-    mFormat = LedgerFormats::getInstance().findByType (
-        static_cast <LedgerEntryType> (getFieldU16 (sfLedgerEntryType)));
+    auto format = LedgerFormats::getInstance().findByType (
+        safe_cast <LedgerEntryType> (
+            getFieldU16 (sfLedgerEntryType)));
 
-    if (mFormat == nullptr)
+    if (format == nullptr)
         Throw<std::runtime_error> ("invalid ledger entry type");
 
-    type_ = mFormat->getType ();
-    if (!setType (mFormat->elements))
-    {
-        if (auto j = debugLog().error())
-        {
-            j << "Ledger entry not valid for type " << mFormat->getName ();
-            j << "Object: " << getJson (0);
-        }
-
-        Throw<std::runtime_error> ("ledger entry not valid for type");
-    }
+    type_ = format->getType ();
+    applyTemplate (format->getSOTemplate());  // May throw
 }
 
 std::string STLedgerEntry::getFullText () const
 {
+    auto const format =
+        LedgerFormats::getInstance().findByType (type_);
+
+    if (format == nullptr)
+        Throw<std::runtime_error> ("invalid ledger entry type");
+
     std::string ret = "\"";
     ret += to_string (key_);
     ret += "\" = { ";
-    ret += mFormat->getName ();
+    ret += format->getName ();
     ret += ", ";
     ret += STObject::getFullText ();
     ret += "}";
@@ -107,7 +106,7 @@ std::string STLedgerEntry::getText () const
                 % STObject::getText ());
 }
 
-Json::Value STLedgerEntry::getJson (int options) const
+Json::Value STLedgerEntry::getJson (JsonOptions options) const
 {
     Json::Value ret (STObject::getJson (options));
 
@@ -121,23 +120,11 @@ bool STLedgerEntry::isThreadedType () const
     return getFieldIndex (sfPreviousTxnID) != -1;
 }
 
-bool STLedgerEntry::isThreaded () const
-{
-    return isFieldPresent (sfPreviousTxnID);
-}
-
-uint256 STLedgerEntry::getThreadedTransaction () const
-{
-    return getFieldH256 (sfPreviousTxnID);
-}
-
-std::uint32_t STLedgerEntry::getThreadedLedger () const
-{
-    return getFieldU32 (sfPreviousTxnLgrSeq);
-}
-
-bool STLedgerEntry::thread (uint256 const& txID, std::uint32_t ledgerSeq,
-                                    uint256& prevTxID, std::uint32_t& prevLedgerID)
+bool STLedgerEntry::thread (
+    uint256 const& txID,
+    std::uint32_t ledgerSeq,
+    uint256& prevTxID,
+    std::uint32_t& prevLedgerID)
 {
     uint256 oldPrevTxID = getFieldH256 (sfPreviousTxnID);
 

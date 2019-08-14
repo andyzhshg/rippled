@@ -17,7 +17,7 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
+#include <ripple/basics/strHex.h>
 #include <ripple/protocol/SecretKey.h>
 #include <ripple/protocol/digest.h>
 #include <ripple/protocol/impl/secp256k1.h>
@@ -36,6 +36,11 @@ SecretKey::~SecretKey()
     beast::secure_erase(buf_, sizeof(buf_));
 }
 
+SecretKey::SecretKey (std::array<std::uint8_t, 32> const& key)
+{
+    std::memcpy(buf_, key.data(), key.size());
+}
+
 SecretKey::SecretKey (Slice const& slice)
 {
     if (slice.size() != sizeof(buf_))
@@ -43,36 +48,51 @@ SecretKey::SecretKey (Slice const& slice)
     std::memcpy(buf_, slice.data(), sizeof(buf_));
 }
 
+std::string
+SecretKey::to_string() const
+{
+    return strHex(*this);
+}
+
 //------------------------------------------------------------------------------
-
-Generator::Generator (Seed const& seed)
+/** Produces a sequence of secp256k1 key pairs. */
+class Generator
 {
-    uint128 ui;
-    std::memcpy(ui.data(),
-        seed.data(), seed.size());
-    gen_ = generateRootDeterministicPublicKey(ui);
-}
+private:
+    Blob gen_; // VFALCO compile time size?
 
-std::pair<PublicKey, SecretKey>
-Generator::operator()(Seed const& seed, std::size_t ordinal) const
-{
-    uint128 ui;
-    std::memcpy(ui.data(), seed.data(), seed.size());
-    auto gsk = generatePrivateDeterministicKey(gen_, ui, ordinal);
-    auto gpk = generatePublicDeterministicKey(gen_, ordinal);
-    SecretKey const sk(Slice{ gsk.data(), gsk.size() });
-    PublicKey const pk(Slice{ gpk.data(), gpk.size() });
-    beast::secure_erase(ui.data(), ui.size());
-    beast::secure_erase(gsk.data(), gsk.size());
-    return { pk, sk };
-}
+public:
+    explicit
+    Generator (Seed const& seed)
+    {
+        // FIXME: Avoid copying the seed into a uint128 key only to have
+        //        generateRootDeterministicPublicKey copy out of it.
+        uint128 ui;
+        std::memcpy(ui.data(),
+            seed.data(), seed.size());
+        gen_ = generateRootDeterministicPublicKey(ui);
+    }
 
-PublicKey
-Generator::operator()(std::size_t ordinal) const
-{
-    auto gpk = generatePublicDeterministicKey(gen_, ordinal);
-    return PublicKey(Slice{ gpk.data(), gpk.size() });
-}
+    /** Generate the nth key pair.
+
+        The seed is required to produce the private key.
+    */
+    std::pair<PublicKey, SecretKey>
+    operator()(Seed const& seed, std::size_t ordinal) const
+    {
+        // FIXME: Avoid copying the seed into a uint128 key only to have
+        //        generatePrivateDeterministicKey copy out of it.
+        uint128 ui;
+        std::memcpy(ui.data(), seed.data(), seed.size());
+        auto gsk = generatePrivateDeterministicKey(gen_, ui, ordinal);
+        auto gpk = generatePublicDeterministicKey(gen_, ordinal);
+        SecretKey const sk(Slice{ gsk.data(), gsk.size() });
+        PublicKey const pk(Slice{ gpk.data(), gpk.size() });
+        beast::secure_erase(ui.data(), ui.size());
+        beast::secure_erase(gsk.data(), gsk.size());
+        return {pk, sk};
+    }
+};
 
 //------------------------------------------------------------------------------
 
@@ -83,16 +103,29 @@ signDigest (PublicKey const& pk, SecretKey const& sk,
     if (publicKeyType(pk.slice()) != KeyType::secp256k1)
         LogicError("sign: secp256k1 required for digest signing");
 
-    int siglen = 72;
-    unsigned char sig[72];
-    auto const result = secp256k1_ecdsa_sign(
-        secp256k1Context(),
-            digest.data(), sig, &siglen,
-                sk.data(), secp256k1_nonce_function_rfc6979,
-                    nullptr);
-    if (result != 1)
+    BOOST_ASSERT(sk.size() == 32);
+    secp256k1_ecdsa_signature sig_imp;
+    if(secp256k1_ecdsa_sign(
+            secp256k1Context(),
+            &sig_imp,
+            reinterpret_cast<unsigned char const*>(
+                digest.data()),
+            reinterpret_cast<unsigned char const*>(
+                sk.data()),
+            secp256k1_nonce_function_rfc6979,
+            nullptr) != 1)
         LogicError("sign: secp256k1_ecdsa_sign failed");
-    return Buffer(sig, siglen);
+
+    unsigned char sig[72];
+    size_t len = sizeof(sig);
+    if(secp256k1_ecdsa_signature_serialize_der(
+            secp256k1Context(),
+            sig,
+            &len,
+            &sig_imp) != 1)
+        LogicError("sign: secp256k1_ecdsa_signature_serialize_der failed");
+
+    return Buffer{sig, len};
 }
 
 Buffer
@@ -118,16 +151,29 @@ sign (PublicKey const& pk,
         h(m.data(), m.size());
         auto const digest =
             sha512_half_hasher::result_type(h);
-        int siglen = 72;
-        unsigned char sig[72];
-        auto const result = secp256k1_ecdsa_sign(
-            secp256k1Context(),
-                digest.data(), sig, &siglen,
-                    sk.data(), secp256k1_nonce_function_rfc6979,
-                        nullptr);
-        if (result != 1)
+
+        secp256k1_ecdsa_signature sig_imp;
+        if(secp256k1_ecdsa_sign(
+                secp256k1Context(),
+                &sig_imp,
+                reinterpret_cast<unsigned char const*>(
+                    digest.data()),
+                reinterpret_cast<unsigned char const*>(
+                    sk.data()),
+                secp256k1_nonce_function_rfc6979,
+                nullptr) != 1)
             LogicError("sign: secp256k1_ecdsa_sign failed");
-        return Buffer(sig, siglen);
+
+        unsigned char sig[72];
+        size_t len = sizeof(sig);
+        if(secp256k1_ecdsa_signature_serialize_der(
+                secp256k1Context(),
+                sig,
+                &len,
+                &sig_imp) != 1)
+            LogicError("sign: secp256k1_ecdsa_signature_serialize_der failed");
+
+        return Buffer{sig, len};
     }
     default:
         LogicError("sign: invalid type");
@@ -154,19 +200,25 @@ generateSecretKey (KeyType type, Seed const& seed)
 {
     if (type == KeyType::ed25519)
     {
-        auto const key = sha512Half_s(Slice(
+        auto key = sha512Half_s(Slice(
             seed.data(), seed.size()));
-        return SecretKey(Slice{ key.data(), key.size() });
+        SecretKey sk = Slice{ key.data(), key.size() };
+        beast::secure_erase(key.data(), key.size());
+        return sk;
     }
 
     if (type == KeyType::secp256k1)
     {
+        // FIXME: Avoid copying the seed into a uint128 key only to have
+        //        generateRootDeterministicPrivateKey copy out of it.
         uint128 ps;
         std::memcpy(ps.data(),
             seed.data(), seed.size());
         auto const upk =
             generateRootDeterministicPrivateKey(ps);
-        return SecretKey(Slice{ upk.data(), upk.size() });
+        SecretKey sk = Slice{ upk.data(), upk.size() };
+        beast::secure_erase(ps.data(), ps.size());
+        return sk;
     }
 
     LogicError ("generateSecretKey: unknown key type");
@@ -179,16 +231,25 @@ derivePublicKey (KeyType type, SecretKey const& sk)
     {
     case KeyType::secp256k1:
     {
-        int len;
-        unsigned char buf[33];
-        auto const result =
-            secp256k1_ec_pubkey_create(
+        secp256k1_pubkey pubkey_imp;
+        if(secp256k1_ec_pubkey_create(
                 secp256k1Context(),
-                    buf, &len, sk.data(), 1);
-        if (result != 1)
-            LogicError("derivePublicKey: failure");
-        return PublicKey(Slice{ buf,
-            static_cast<std::size_t>(len) });
+                &pubkey_imp,
+                reinterpret_cast<unsigned char const*>(
+                    sk.data())) != 1)
+            LogicError("derivePublicKey: secp256k1_ec_pubkey_create failed");
+
+        unsigned char pubkey[33];
+        std::size_t len = sizeof(pubkey);
+        if(secp256k1_ec_pubkey_serialize(
+                secp256k1Context(),
+                pubkey,
+                &len,
+                &pubkey_imp,
+                SECP256K1_EC_COMPRESSED) != 1)
+            LogicError("derivePublicKey: secp256k1_ec_pubkey_serialize failed");
+
+        return PublicKey{Slice{ pubkey, len }};
     }
     case KeyType::ed25519:
     {

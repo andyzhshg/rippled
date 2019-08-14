@@ -42,7 +42,8 @@ struct Fees;
 class LoadFeeTrack final
 {
 public:
-    explicit LoadFeeTrack (beast::Journal journal = beast::Journal())
+    explicit LoadFeeTrack (beast::Journal journal =
+        beast::Journal(beast::Journal::getNullSink()))
         : j_ (journal)
         , localTxnLoadFee_ (lftNormalFee)
         , remoteTxnLoadFee_ (lftNormalFee)
@@ -137,9 +138,6 @@ private:
 };
 
 //------------------------------------------------------------------------------
-
-// Scale from fee units to millionths of a ripple
-std::uint64_t scaleFeeBase(std::uint64_t fee, Fees const& fees);
 
 // Scale using load as well as base rate
 std::uint64_t scaleFeeLoad(std::uint64_t fee, LoadFeeTrack const& feeTrack,

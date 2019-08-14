@@ -17,20 +17,21 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/core/Config.h>
 #include <ripple/core/ConfigSections.h>
 #include <ripple/basics/contract.h>
+#include <ripple/basics/FileUtilities.h>
 #include <ripple/basics/Log.h>
 #include <ripple/json/json_reader.h>
 #include <ripple/protocol/Feature.h>
 #include <ripple/protocol/SystemParameters.h>
 #include <ripple/net/HTTPClient.h>
 #include <ripple/beast/core/LexicalCast.h>
-#include <beast/core/detail/ci_char_traits.hpp>
+#include <boost/beast/core/string.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <boost/regex.hpp>
+#include <boost/system/error_code.hpp>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -68,6 +69,9 @@ parseIniFile (std::string const& strInput, const bool bTrim)
     // Parse each line.
     for (auto& strValue : vLines)
     {
+        if (bTrim)
+            boost::algorithm::trim (strValue);
+
         if (strValue.empty () || strValue[0] == '#')
         {
             // Blank line or comment, do nothing.
@@ -81,9 +85,6 @@ parseIniFile (std::string const& strInput, const bool bTrim)
         else
         {
             // Another line for Section.
-            if (bTrim)
-                boost::algorithm::trim (strValue);
-
             if (!strValue.empty ())
                 secResult[strSection].push_back (strValue);
         }
@@ -255,7 +256,7 @@ void Config::setup (std::string const& strConf, bool bQuiet,
         legacy("database_path", boost::filesystem::absolute(dataDir).string());
     }
 
-    HTTPClient::initializeSSLContext(*this);
+    HTTPClient::initializeSSLContext(*this, j_);
 
     if (RUN_STANDALONE)
         LEDGER_HISTORY = 0;
@@ -263,24 +264,19 @@ void Config::setup (std::string const& strConf, bool bQuiet,
 
 void Config::load ()
 {
+    // NOTE: this writes to cerr because we want cout to be reserved
+    // for the writing of the json response (so that stdout can be part of a
+    // pipeline, for instance)
     if (!QUIET)
         std::cerr << "Loading: " << CONFIG_FILE << "\n";
 
-    std::ifstream ifsConfig (CONFIG_FILE.c_str (), std::ios::in);
+    boost::system::error_code ec;
+    auto const fileContents = getFileContents(ec, CONFIG_FILE);
 
-    if (!ifsConfig)
+    if (ec)
     {
-        std::cerr << "Failed to open '" << CONFIG_FILE << "'." << std::endl;
-        return;
-    }
-
-    std::string fileContents;
-    fileContents.assign ((std::istreambuf_iterator<char>(ifsConfig)),
-                          std::istreambuf_iterator<char>());
-
-    if (ifsConfig.bad ())
-    {
-        std::cerr << "Failed to read '" << CONFIG_FILE << "'." << std::endl;
+        std::cerr << "Failed to read '" << CONFIG_FILE << "'." <<
+            ec.value() << ": " << ec.message() << std::endl;
         return;
     }
 
@@ -315,22 +311,22 @@ void Config::loadFromString (std::string const& fileContents)
     std::string strTemp;
 
     if (getSingleSection (secConfig, SECTION_PEER_PRIVATE, strTemp, j_))
-        PEER_PRIVATE        = beast::lexicalCastThrow <bool> (strTemp);
+        PEER_PRIVATE = beast::lexicalCastThrow <bool> (strTemp);
 
     if (getSingleSection (secConfig, SECTION_PEERS_MAX, strTemp, j_))
-        PEERS_MAX = std::max (0, beast::lexicalCastThrow <int> (strTemp));
+        PEERS_MAX = beast::lexicalCastThrow <std::size_t> (strTemp);
 
     if (getSingleSection (secConfig, SECTION_NODE_SIZE, strTemp, j_))
     {
-        if (beast::detail::ci_equal(strTemp, "tiny"))
+        if (boost::beast::detail::iequals(strTemp, "tiny"))
             NODE_SIZE = 0;
-        else if (beast::detail::ci_equal(strTemp, "small"))
+        else if (boost::beast::detail::iequals(strTemp, "small"))
             NODE_SIZE = 1;
-        else if (beast::detail::ci_equal(strTemp, "medium"))
+        else if (boost::beast::detail::iequals(strTemp, "medium"))
             NODE_SIZE = 2;
-        else if (beast::detail::ci_equal(strTemp, "large"))
+        else if (boost::beast::detail::iequals(strTemp, "large"))
             NODE_SIZE = 3;
-        else if (beast::detail::ci_equal(strTemp, "huge"))
+        else if (boost::beast::detail::iequals(strTemp, "huge"))
             NODE_SIZE = 4;
         else
         {
@@ -342,6 +338,9 @@ void Config::loadFromString (std::string const& fileContents)
                 NODE_SIZE = 4;
         }
     }
+
+    if (getSingleSection (secConfig, SECTION_SIGNING_SUPPORT, strTemp, j_))
+        signingEnabled_     = beast::lexicalCastThrow <bool> (strTemp);
 
     if (getSingleSection (secConfig, SECTION_ELB_SUPPORT, strTemp, j_))
         ELB_SUPPORT         = beast::lexicalCastThrow <bool> (strTemp);
@@ -355,28 +354,13 @@ void Config::loadFromString (std::string const& fileContents)
     if (getSingleSection (secConfig, SECTION_SSL_VERIFY, strTemp, j_))
         SSL_VERIFY          = beast::lexicalCastThrow <bool> (strTemp);
 
-    if (getSingleSection (secConfig, SECTION_VALIDATION_SEED, strTemp, j_))
-    {
-        auto const seed = parseBase58<Seed>(strTemp);
-        if (!seed)
-            Throw<std::runtime_error> (
-                "Invalid seed specified in [" SECTION_VALIDATION_SEED "]");
-        VALIDATION_PRIV = generateSecretKey (KeyType::secp256k1, *seed);
-        VALIDATION_PUB = derivePublicKey (KeyType::secp256k1, VALIDATION_PRIV);
-    }
-
-    if (getSingleSection (secConfig, SECTION_NODE_SEED, NODE_SEED, j_))
-    {
-        if (!parseBase58<Seed>(NODE_SEED))
-            Throw<std::runtime_error> (
-                "Invalid seed specified in [" SECTION_NODE_SEED "]");
-    }
+    if (exists(SECTION_VALIDATION_SEED) && exists(SECTION_VALIDATOR_TOKEN))
+        Throw<std::runtime_error> (
+            "Cannot have both [" SECTION_VALIDATION_SEED "] "
+            "and [" SECTION_VALIDATOR_TOKEN "] config sections");
 
     if (getSingleSection (secConfig, SECTION_NETWORK_QUORUM, strTemp, j_))
-        NETWORK_QUORUM      = beast::lexicalCastThrow <std::size_t> (strTemp);
-
-    if (getSingleSection (secConfig, SECTION_VALIDATION_QUORUM, strTemp, j_))
-        VALIDATION_QUORUM   = std::max (0, beast::lexicalCastThrow <int> (strTemp));
+        NETWORK_QUORUM      = beast::lexicalCastThrow<std::size_t>(strTemp);
 
     if (getSingleSection (secConfig, SECTION_FEE_ACCOUNT_RESERVE, strTemp, j_))
         FEE_ACCOUNT_RESERVE = beast::lexicalCastThrow <std::uint64_t> (strTemp);
@@ -392,9 +376,9 @@ void Config::loadFromString (std::string const& fileContents)
 
     if (getSingleSection (secConfig, SECTION_LEDGER_HISTORY, strTemp, j_))
     {
-        if (beast::detail::ci_equal(strTemp, "full"))
+        if (boost::beast::detail::iequals(strTemp, "full"))
             LEDGER_HISTORY = 1000000000u;
-        else if (beast::detail::ci_equal(strTemp, "none"))
+        else if (boost::beast::detail::iequals(strTemp, "none"))
             LEDGER_HISTORY = 0;
         else
             LEDGER_HISTORY = beast::lexicalCastThrow <std::uint32_t> (strTemp);
@@ -402,9 +386,9 @@ void Config::loadFromString (std::string const& fileContents)
 
     if (getSingleSection (secConfig, SECTION_FETCH_DEPTH, strTemp, j_))
     {
-        if (beast::detail::ci_equal(strTemp, "none"))
+        if (boost::beast::detail::iequals(strTemp, "none"))
             FETCH_DEPTH = 0;
-        else if (beast::detail::ci_equal(strTemp, "full"))
+        else if (boost::beast::detail::iequals(strTemp, "full"))
             FETCH_DEPTH = 1000000000u;
         else
             FETCH_DEPTH = beast::lexicalCastThrow <std::uint32_t> (strTemp);
@@ -422,111 +406,156 @@ void Config::loadFromString (std::string const& fileContents)
     if (getSingleSection (secConfig, SECTION_PATH_SEARCH_MAX, strTemp, j_))
         PATH_SEARCH_MAX     = beast::lexicalCastThrow <int> (strTemp);
 
-    // If a file was explicitly specified, then throw if the
-    // path is malformed or if the file does not exist or is
-    // not a file.
-    // If the specified file is not an absolute path, then look
-    // for it in the same directory as the config file.
-    // If no path was specified, then look for validators.txt
-    // in the same directory as the config file, but don't complain
-    // if we can't find it.
-    boost::filesystem::path validatorsFile;
-
-    if (getSingleSection (secConfig, SECTION_VALIDATORS_FILE, strTemp, j_))
-    {
-        validatorsFile = strTemp;
-
-        if (validatorsFile.empty ())
-            Throw<std::runtime_error> (
-                "Invalid path specified in [" SECTION_VALIDATORS_FILE "]");
-
-        if (!validatorsFile.is_absolute() && !CONFIG_DIR.empty())
-            validatorsFile = CONFIG_DIR / validatorsFile;
-
-        if (!boost::filesystem::exists (validatorsFile))
-            Throw<std::runtime_error> (
-                "The file specified in [" SECTION_VALIDATORS_FILE "] "
-                "does not exist: " + validatorsFile.string());
-
-        else if (!boost::filesystem::is_regular_file (validatorsFile) &&
-                !boost::filesystem::is_symlink (validatorsFile))
-            Throw<std::runtime_error> (
-                "Invalid file specified in [" SECTION_VALIDATORS_FILE "]: " +
-                validatorsFile.string());
-    }
-    else if (!CONFIG_DIR.empty())
-    {
-        validatorsFile = CONFIG_DIR / validatorsFileName;
-
-        if (!validatorsFile.empty ())
-        {
-            if(!boost::filesystem::exists (validatorsFile))
-                validatorsFile.clear();
-            else if (!boost::filesystem::is_regular_file (validatorsFile) &&
-                    !boost::filesystem::is_symlink (validatorsFile))
-                validatorsFile.clear();
-        }
-    }
-
-    if (!validatorsFile.empty () &&
-            boost::filesystem::exists (validatorsFile) &&
-            (boost::filesystem::is_regular_file (validatorsFile) ||
-            boost::filesystem::is_symlink (validatorsFile)))
-    {
-        std::ifstream ifsDefault (validatorsFile.native().c_str());
-
-        std::string data;
-
-        data.assign (
-            std::istreambuf_iterator<char>(ifsDefault),
-            std::istreambuf_iterator<char>());
-
-        auto iniFile = parseIniFile (data, true);
-
-        auto entries = getIniFileSection (
-            iniFile,
-            SECTION_VALIDATORS);
-
-        if (entries)
-            section (SECTION_VALIDATORS).append (*entries);
-
-        auto valKeyEntries = getIniFileSection(
-            iniFile,
-            SECTION_VALIDATOR_KEYS);
-
-        if (valKeyEntries)
-            section (SECTION_VALIDATOR_KEYS).append (*valKeyEntries);
-
-        if (!entries && !valKeyEntries)
-            Throw<std::runtime_error> (
-                "The file specified in [" SECTION_VALIDATORS_FILE "] "
-                "does not contain a [" SECTION_VALIDATORS "] or "
-                "[" SECTION_VALIDATOR_KEYS "] section: " +
-                validatorsFile.string());
-
-        // Look for [validation_quorum] in the validators file
-        // if it was not in the config
-        if (!getIniFileSection (secConfig, SECTION_VALIDATION_QUORUM))
-        {
-            if (!getSingleSection (
-                iniFile, SECTION_VALIDATION_QUORUM, strTemp, j_))
-                Throw<std::runtime_error> (
-                    "The file specified in [" SECTION_VALIDATORS_FILE "] "
-                    "does not contain a [" SECTION_VALIDATION_QUORUM "] "
-                    "section: " + validatorsFile.string());
-            else
-                VALIDATION_QUORUM = std::max (
-                    0, beast::lexicalCastThrow <int> (strTemp));
-        }
-    }
-
     if (getSingleSection (secConfig, SECTION_DEBUG_LOGFILE, strTemp, j_))
         DEBUG_LOGFILE       = strTemp;
+
+    if (getSingleSection (secConfig, SECTION_WORKERS, strTemp, j_))
+        WORKERS      = beast::lexicalCastThrow <std::size_t> (strTemp);
+
+    // Do not load trusted validator configuration for standalone mode
+    if (! RUN_STANDALONE)
+    {
+        // If a file was explicitly specified, then throw if the
+        // path is malformed or if the file does not exist or is
+        // not a file.
+        // If the specified file is not an absolute path, then look
+        // for it in the same directory as the config file.
+        // If no path was specified, then look for validators.txt
+        // in the same directory as the config file, but don't complain
+        // if we can't find it.
+        boost::filesystem::path validatorsFile;
+
+        if (getSingleSection (secConfig, SECTION_VALIDATORS_FILE, strTemp, j_))
+        {
+            validatorsFile = strTemp;
+
+            if (validatorsFile.empty ())
+                Throw<std::runtime_error> (
+                    "Invalid path specified in [" SECTION_VALIDATORS_FILE "]");
+
+            if (!validatorsFile.is_absolute() && !CONFIG_DIR.empty())
+                validatorsFile = CONFIG_DIR / validatorsFile;
+
+            if (!boost::filesystem::exists (validatorsFile))
+                Throw<std::runtime_error> (
+                    "The file specified in [" SECTION_VALIDATORS_FILE "] "
+                    "does not exist: " + validatorsFile.string());
+
+            else if (!boost::filesystem::is_regular_file (validatorsFile) &&
+                    !boost::filesystem::is_symlink (validatorsFile))
+                Throw<std::runtime_error> (
+                    "Invalid file specified in [" SECTION_VALIDATORS_FILE "]: " +
+                    validatorsFile.string());
+        }
+        else if (!CONFIG_DIR.empty())
+        {
+            validatorsFile = CONFIG_DIR / validatorsFileName;
+
+            if (!validatorsFile.empty ())
+            {
+                if(!boost::filesystem::exists (validatorsFile))
+                    validatorsFile.clear();
+                else if (!boost::filesystem::is_regular_file (validatorsFile) &&
+                        !boost::filesystem::is_symlink (validatorsFile))
+                    validatorsFile.clear();
+            }
+        }
+
+        if (!validatorsFile.empty () &&
+                boost::filesystem::exists (validatorsFile) &&
+                (boost::filesystem::is_regular_file (validatorsFile) ||
+                boost::filesystem::is_symlink (validatorsFile)))
+        {
+            boost::system::error_code ec;
+            auto const data = getFileContents(ec, validatorsFile);
+            if (ec)
+            {
+                Throw<std::runtime_error>("Failed to read '" +
+                    validatorsFile.string() + "'." +
+                    std::to_string(ec.value()) + ": " + ec.message());
+            }
+
+            auto iniFile = parseIniFile (data, true);
+
+            auto entries = getIniFileSection (
+                iniFile,
+                SECTION_VALIDATORS);
+
+            if (entries)
+                section (SECTION_VALIDATORS).append (*entries);
+
+            auto valKeyEntries = getIniFileSection(
+                iniFile,
+                SECTION_VALIDATOR_KEYS);
+
+            if (valKeyEntries)
+                section (SECTION_VALIDATOR_KEYS).append (*valKeyEntries);
+
+            auto valSiteEntries = getIniFileSection(
+                iniFile,
+                SECTION_VALIDATOR_LIST_SITES);
+
+            if (valSiteEntries)
+                section (SECTION_VALIDATOR_LIST_SITES).append (*valSiteEntries);
+
+            auto valListKeys = getIniFileSection(
+                iniFile,
+                SECTION_VALIDATOR_LIST_KEYS);
+
+            if (valListKeys)
+                section (SECTION_VALIDATOR_LIST_KEYS).append (*valListKeys);
+
+            if (!entries && !valKeyEntries && !valListKeys)
+                Throw<std::runtime_error> (
+                    "The file specified in [" SECTION_VALIDATORS_FILE "] "
+                    "does not contain a [" SECTION_VALIDATORS "], "
+                    "[" SECTION_VALIDATOR_KEYS "] or "
+                    "[" SECTION_VALIDATOR_LIST_KEYS "]"
+                    " section: " +
+                    validatorsFile.string());
+        }
+
+        // Consolidate [validator_keys] and [validators]
+        section (SECTION_VALIDATORS).append (
+            section (SECTION_VALIDATOR_KEYS).lines ());
+
+        if (! section (SECTION_VALIDATOR_LIST_SITES).lines().empty() &&
+            section (SECTION_VALIDATOR_LIST_KEYS).lines().empty())
+        {
+            Throw<std::runtime_error> (
+                "[" + std::string(SECTION_VALIDATOR_LIST_KEYS) +
+                "] config section is missing");
+        }
+    }
 
     {
         auto const part = section("features");
         for(auto const& s : part.values())
-            features.insert(feature(s));
+        {
+            if (auto const f = getRegisteredFeature(s))
+                features.insert(*f);
+            else
+                Throw<std::runtime_error>(
+                    "Unknown feature: " + s + "  in config file.");
+        }
+    }
+
+    // This doesn't properly belong here, but check to make sure that the
+    // value specified for network_quorum is achievable:
+    {
+        auto pm = PEERS_MAX;
+
+        // FIXME this apparently magic value is actually defined as a constant
+        //       elsewhere (see defaultMaxPeers) but we handle this check here.
+        if (pm == 0)
+            pm = 21;
+
+        if (NETWORK_QUORUM > pm)
+        {
+            Throw<std::runtime_error>(
+                "The minimum number of required peers (network_quorum) exceeds "
+                "the maximum number of allowed peers (peers_max)");
+        }
     }
 }
 
@@ -537,7 +566,7 @@ int Config::getSize (SizedItemName item) const
 
         { siSweepInterval,      {   10,     30,     60,     90,         120     } },
 
-        { siLedgerFetch,        {   2,      2,      3,      3,          3       } },
+        { siLedgerFetch,        {   2,      3,      5,      5,          8       } },
 
         { siNodeCacheSize,      {   16384,  32768,  131072, 262144,     524288  } },
         { siNodeCacheAge,       {   60,     90,     120,    900,        1800    } },
@@ -551,9 +580,9 @@ int Config::getSize (SizedItemName item) const
         { siLedgerSize,         {   32,     128,    256,    384,        768     } },
         { siLedgerAge,          {   30,     90,     180,    240,        900     } },
 
-        { siHashNodeDBCache,    {   4,      12,     24,     64,         128      } },
-        { siTxnDBCache,         {   4,      12,     24,     64,         128      } },
-        { siLgrDBCache,         {   4,      8,      16,     32,         128      } },
+        { siHashNodeDBCache,    {   4,      12,     24,     64,         128     } },
+        { siTxnDBCache,         {   4,      12,     24,     64,         128     } },
+        { siLgrDBCache,         {   4,      8,      16,     32,         128     } },
     };
 
     for (int i = 0; i < (sizeof (sizeTable) / sizeof (SizedItem)); ++i)

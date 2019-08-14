@@ -17,18 +17,24 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/protocol/TER.h>
+#include <boost/range/adaptor/transformed.hpp>
 #include <unordered_map>
 #include <type_traits>
 
 namespace ripple {
 
-bool transResultInfo (TER code, std::string& token, std::string& text)
+namespace detail {
+
+static
+std::unordered_map<
+    TERUnderlyingType,
+    std::pair<char const* const, char const* const>> const&
+transResults()
 {
     static
     std::unordered_map<
-        std::underlying_type_t<TER>,
+        TERUnderlyingType,
         std::pair<char const* const, char const* const>> const
     results
     {
@@ -63,6 +69,11 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
         { tecNEED_MASTER_KEY,        { "tecNEED_MASTER_KEY",       "The operation requires the use of the Master Key."                             } },
         { tecDST_TAG_NEEDED,         { "tecDST_TAG_NEEDED",        "A destination tag is required."                                                } },
         { tecINTERNAL,               { "tecINTERNAL",              "An internal error has occurred during processing."                             } },
+        { tecCRYPTOCONDITION_ERROR,  { "tecCRYPTOCONDITION_ERROR", "Malformed, invalid, or mismatched conditional or fulfillment."                 } },
+        { tecINVARIANT_FAILED,       { "tecINVARIANT_FAILED",      "One or more invariants for the transaction were not satisfied."                } },
+        { tecEXPIRED,                { "tecEXPIRED",               "Expiration time is passed."                                                    } },
+        { tecDUPLICATE,              { "tecDUPLICATE",             "Ledger object already exists."                                                 } },
+        { tecKILLED,                 { "tecKILLED",                "FillOrKill offer killed."                                                      } },
 
         { tefALREADY,                { "tefALREADY",               "The exact transaction was already in this ledger."                             } },
         { tefBAD_ADD_AUTH,           { "tefBAD_ADD_AUTH",          "Not authorized to add account."                                                } },
@@ -78,9 +89,10 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
         { tefMAX_LEDGER,             { "tefMAX_LEDGER",            "Ledger sequence too high."                                                     } },
         { tefNO_AUTH_REQUIRED,       { "tefNO_AUTH_REQUIRED",      "Auth is not required."                                                         } },
         { tefNOT_MULTI_SIGNING,      { "tefNOT_MULTI_SIGNING",     "Account has no appropriate list of multi-signers."                             } },
-        { tefPAST_SEQ,               { "tefPAST_SEQ",              "This sequence number has already past."                                        } },
+        { tefPAST_SEQ,               { "tefPAST_SEQ",              "This sequence number has already passed."                                      } },
         { tefWRONG_PRIOR,            { "tefWRONG_PRIOR",           "This previous transaction does not match."                                     } },
         { tefBAD_AUTH_MASTER,        { "tefBAD_AUTH_MASTER",       "Auth for unclaimed account needs correct master key."                          } },
+        { tefINVARIANT_FAILED,       { "tefINVARIANT_FAILED",      "Fee claim violated invariants for the transaction."                            } },
 
         { telLOCAL_ERROR,            { "telLOCAL_ERROR",           "Local failure."                                                                } },
         { telBAD_DOMAIN,             { "telBAD_DOMAIN",            "Domain too long."                                                              } },
@@ -89,7 +101,12 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
         { telFAILED_PROCESSING,      { "telFAILED_PROCESSING",     "Failed to correctly process transaction."                                      } },
         { telINSUF_FEE_P,            { "telINSUF_FEE_P",           "Fee insufficient."                                                             } },
         { telNO_DST_PARTIAL,         { "telNO_DST_PARTIAL",        "Partial payment to create account not allowed."                                } },
-        { telCAN_NOT_QUEUE,          { "telCAN_NOT_QUEUE",         "Can not queue at this time." } },
+        { telCAN_NOT_QUEUE,          { "telCAN_NOT_QUEUE",         "Can not queue at this time."                                                   } },
+        { telCAN_NOT_QUEUE_BALANCE,  { "telCAN_NOT_QUEUE_BALANCE", "Can not queue at this time: insufficient balance to pay all queued fees."      } },
+        { telCAN_NOT_QUEUE_BLOCKS,   { "telCAN_NOT_QUEUE_BLOCKS",  "Can not queue at this time: would block later queued transaction(s)."          } },
+        { telCAN_NOT_QUEUE_BLOCKED,  { "telCAN_NOT_QUEUE_BLOCKED", "Can not queue at this time: blocking transaction in queue."                    } },
+        { telCAN_NOT_QUEUE_FEE,      { "telCAN_NOT_QUEUE_FEE",     "Can not queue at this time: fee insufficient to replace queued transaction."   } },
+        { telCAN_NOT_QUEUE_FULL,     { "telCAN_NOT_QUEUE_FULL",    "Can not queue at this time: queue is full."                                    } },
 
         { temMALFORMED,              { "temMALFORMED",             "Malformed transaction."                                                        } },
         { temBAD_AMOUNT,             { "temBAD_AMOUNT",            "Can only send positive amounts."                                               } },
@@ -102,6 +119,7 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
         { temBAD_PATH,               { "temBAD_PATH",              "Malformed: Bad path."                                                          } },
         { temBAD_PATH_LOOP,          { "temBAD_PATH_LOOP",         "Malformed: Loop in path."                                                      } },
         { temBAD_QUORUM,             { "temBAD_QUORUM",            "Malformed: Quorum is unreachable."                                             } },
+        { temBAD_REGKEY,             { "temBAD_REGKEY",            "Malformed: Regular key cannot be same as master key."                          } },
         { temBAD_SEND_XRP_LIMIT,     { "temBAD_SEND_XRP_LIMIT",    "Malformed: Limit quality is not allowed for XRP to XRP."                       } },
         { temBAD_SEND_XRP_MAX,       { "temBAD_SEND_XRP_MAX",      "Malformed: Send max is not allowed for XRP to XRP."                            } },
         { temBAD_SEND_XRP_NO_DIRECT, { "temBAD_SEND_XRP_NO_DIRECT","Malformed: No Ripple direct is not allowed for XRP to XRP."                    } },
@@ -111,7 +129,7 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
         { temBAD_SIGNATURE,          { "temBAD_SIGNATURE",         "Malformed: Bad signature."                                                     } },
         { temBAD_SIGNER,             { "temBAD_SIGNER",            "Malformed: No signer may duplicate account or other signers."                  } },
         { temBAD_SRC_ACCOUNT,        { "temBAD_SRC_ACCOUNT",       "Malformed: Bad source account."                                                } },
-        { temBAD_TRANSFER_RATE,      { "temBAD_TRANSFER_RATE",     "Malformed: Transfer rate must be >= 1.0"                                       } },
+        { temBAD_TRANSFER_RATE,      { "temBAD_TRANSFER_RATE",     "Malformed: Transfer rate must be >= 1.0 and <= 2.0"                                       } },
         { temBAD_WEIGHT,             { "temBAD_WEIGHT",            "Malformed: Weight must be a positive value."                                   } },
         { temDST_IS_SRC,             { "temDST_IS_SRC",            "Destination may not be source."                                                } },
         { temDST_NEEDED,             { "temDST_NEEDED",            "Destination not specified."                                                    } },
@@ -122,6 +140,9 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
         { temUNCERTAIN,              { "temUNCERTAIN",             "In process of determining result. Never returned."                             } },
         { temUNKNOWN,                { "temUNKNOWN",               "The transaction requires logic that is not implemented yet."                   } },
         { temDISABLED,               { "temDISABLED",              "The transaction requires logic that is currently disabled."                    } },
+        { temBAD_TICK_SIZE,          { "temBAD_TICK_SIZE",         "Malformed: Tick size out of range."                                            } },
+        { temINVALID_ACCOUNT_ID,     { "temINVALID_ACCOUNT_ID",    "Malformed: A field contains an invalid account ID."                            } },
+        { temCANNOT_PREAUTH_SELF,    { "temCANNOT_PREAUTH_SELF",   "Malformed: An account may not preauthorize itself."                            } },
 
         { terRETRY,                  { "terRETRY",                 "Retry transaction."                                                            } },
         { terFUNDS_SPENT,            { "terFUNDS_SPENT",           "Can't set password, password set funds already spent."                         } },
@@ -137,9 +158,16 @@ bool transResultInfo (TER code, std::string& token, std::string& text)
 
         { tesSUCCESS,                { "tesSUCCESS",               "The transaction was applied. Only final in a validated ledger."                } },
     };
+    return results;
+}
 
-    auto const r = results.find (
-        static_cast<std::underlying_type_t<TER>> (code));
+}
+
+bool transResultInfo (TER code, std::string& token, std::string& text)
+{
+    auto& results = detail::transResults();
+
+    auto const r = results.find (TERtoInt (code));
 
     if (r == results.end())
         return false;
@@ -163,6 +191,37 @@ std::string transHuman (TER code)
     std::string text;
 
     return transResultInfo (code, token, text) ? text : "-";
+}
+
+boost::optional<TER>
+transCode(std::string const& token)
+{
+    static
+    auto const results = []
+    {
+        auto& byTer = detail::transResults();
+        auto range = boost::make_iterator_range(byTer.begin(),
+            byTer.end());
+        auto tRange = boost::adaptors::transform(
+            range,
+            [](auto const& r)
+            {
+            return std::make_pair(r.second.first, r.first);
+            }
+        );
+        std::unordered_map<
+            std::string,
+            TERUnderlyingType> const
+        byToken(tRange.begin(), tRange.end());
+        return byToken;
+    }();
+
+    auto const r = results.find(token);
+
+    if (r == results.end())
+        return boost::none;
+
+    return TER::fromInt (r->second);
 }
 
 } // ripple

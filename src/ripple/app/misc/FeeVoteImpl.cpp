@@ -17,11 +17,10 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/protocol/st.h>
 #include <ripple/app/misc/FeeVote.h>
 #include <ripple/app/main/Application.h>
-#include <ripple/app/misc/Validations.h>
+#include <ripple/protocol/STValidation.h>
 #include <ripple/basics/BasicConfig.h>
 #include <ripple/beast/utility/Journal.h>
 
@@ -99,11 +98,11 @@ public:
 
     void
     doValidation (std::shared_ptr<ReadView const> const& lastClosedLedger,
-        STObject& baseValidation) override;
+        STValidation::FeeSettings& fees) override;
 
     void
     doVoting (std::shared_ptr<ReadView const> const& lastClosedLedger,
-        ValidationSet const& parentValidations,
+        std::vector<STValidation::pointer> const& parentValidations,
         std::shared_ptr<SHAMap> const& initialPosition) override;
 };
 
@@ -118,22 +117,22 @@ FeeVoteImpl::FeeVoteImpl (Setup const& setup, beast::Journal journal)
 void
 FeeVoteImpl::doValidation(
     std::shared_ptr<ReadView const> const& lastClosedLedger,
-        STObject& baseValidation)
+        STValidation::FeeSettings& fees)
 {
     if (lastClosedLedger->fees().base != target_.reference_fee)
     {
         JLOG(journal_.info()) <<
             "Voting for base fee of " << target_.reference_fee;
 
-        baseValidation.setFieldU64 (sfBaseFee, target_.reference_fee);
+        fees.baseFee = target_.reference_fee;
     }
 
     if (lastClosedLedger->fees().accountReserve(0) != target_.account_reserve)
     {
         JLOG(journal_.info()) <<
-            "Voting for base resrve of " << target_.account_reserve;
+            "Voting for base reserve of " << target_.account_reserve;
 
-        baseValidation.setFieldU32(sfReserveBase, target_.account_reserve);
+        fees.reserveBase = target_.account_reserve;
     }
 
     if (lastClosedLedger->fees().increment != target_.owner_reserve)
@@ -141,16 +140,15 @@ FeeVoteImpl::doValidation(
         JLOG(journal_.info()) <<
             "Voting for reserve increment of " << target_.owner_reserve;
 
-        baseValidation.setFieldU32 (sfReserveIncrement,
-            target_.owner_reserve);
+        fees.reserveIncrement = target_.owner_reserve;
     }
 }
 
 void
 FeeVoteImpl::doVoting(
     std::shared_ptr<ReadView const> const& lastClosedLedger,
-        ValidationSet const& set,
-            std::shared_ptr<SHAMap> const& initialPosition)
+    std::vector<STValidation::pointer> const& set,
+    std::shared_ptr<SHAMap> const& initialPosition)
 {
     // LCL must be flag ledger
     assert ((lastClosedLedger->info().seq % 256) == 0);
@@ -164,33 +162,31 @@ FeeVoteImpl::doVoting(
     detail::VotableInteger<std::uint32_t> incReserveVote (
         lastClosedLedger->fees().increment, target_.owner_reserve);
 
-    for (auto const& e : set)
+    for (auto const& val : set)
     {
-        STValidation const& val = *e.second;
-
-        if (val.isTrusted ())
+        if (val->isTrusted ())
         {
-            if (val.isFieldPresent (sfBaseFee))
+            if (val->isFieldPresent (sfBaseFee))
             {
-                baseFeeVote.addVote (val.getFieldU64 (sfBaseFee));
+                baseFeeVote.addVote (val->getFieldU64 (sfBaseFee));
             }
             else
             {
                 baseFeeVote.noVote ();
             }
 
-            if (val.isFieldPresent (sfReserveBase))
+            if (val->isFieldPresent (sfReserveBase))
             {
-                baseReserveVote.addVote (val.getFieldU32 (sfReserveBase));
+                baseReserveVote.addVote (val->getFieldU32 (sfReserveBase));
             }
             else
             {
                 baseReserveVote.noVote ();
             }
 
-            if (val.isFieldPresent (sfReserveIncrement))
+            if (val->isFieldPresent (sfReserveIncrement))
             {
-                incReserveVote.addVote (val.getFieldU32 (sfReserveIncrement));
+                incReserveVote.addVote (val->getFieldU32 (sfReserveIncrement));
             }
             else
             {

@@ -87,6 +87,7 @@ private:
     mutable SHAMapState             state_;
     SHAMapType                      type_;
     bool                            backed_ = true; // Map is backed by the database
+    bool                            full_ = false; // Map is believed complete in database
 
 public:
     class version
@@ -122,6 +123,12 @@ public:
         Family& f,
         version v);
 
+    Family const&
+    family() const
+    {
+        return f_;
+    }
+
     Family&
     family()
     {
@@ -145,11 +152,12 @@ public:
     // Handles copy on write for mutable snapshots.
     std::shared_ptr<SHAMap> snapShot (bool isMutable) const;
 
-    /*  Sets metadata associated with the SHAMap
-
-        Marked `const` because the data is not part of
-        the map contents.
+    /*  Mark this SHAMap as "should be full", indicating
+        that the local server wants all the corresponding nodes
+        in durable storage.
     */
+    void setFull ();
+
     void setLedgerSeq (std::uint32_t lseq);
 
     bool fetchRoot (SHAMapHash const& hash, SHAMapSyncFilter * filter);
@@ -177,16 +185,44 @@ public:
     // traverse functions
     const_iterator upper_bound(uint256 const& id) const;
 
-    void visitNodes (std::function<bool (SHAMapAbstractNode&)> const&) const;
-    void
-        visitLeaves(
-            std::function<void(std::shared_ptr<SHAMapItem const> const&)> const&) const;
+    /**  Visit every node in this SHAMap
+
+         @param function called with every node visited.
+         If function returns false, visitNodes exits.
+    */
+    void visitNodes (std::function<bool (
+        SHAMapAbstractNode&)> const& function) const;
+
+    /**  Visit every node in this SHAMap that
+         is not present in the specified SHAMap
+
+         @param function called with every node visited.
+         If function returns false, visitDifferences exits.
+    */
+    void visitDifferences(SHAMap const* have,
+        std::function<bool (SHAMapAbstractNode&)>) const;
+
+    /**  Visit every leaf node in this SHAMap
+
+         @param function called with every non inner node visited.
+    */
+    void visitLeaves(std::function<void (
+        std::shared_ptr<SHAMapItem const> const&)> const&) const;
 
     // comparison/sync functions
+
+    /** Check for nodes in the SHAMap not available
+
+        Traverse the SHAMap efficiently, maximizing I/O
+        concurrency, to discover nodes referenced in the
+        SHAMap but not available locally.
+
+        @param maxNodes The maximum number of found nodes to return
+        @param filter The filter to use when retrieving nodes
+        @param return The nodes known to be missing
+    */
     std::vector<std::pair<SHAMapNodeID, uint256>>
-    getMissingNodes (
-        std::size_t max,
-        SHAMapSyncFilter *filter);
+    getMissingNodes (int maxNodes, SHAMapSyncFilter *filter);
 
     bool getNodeFat (SHAMapNodeID node,
         std::vector<SHAMapNodeID>& nodeIDs,
@@ -199,6 +235,7 @@ public:
                                SHANodeFormat format, SHAMapSyncFilter * filter);
     SHAMapAddNode addKnownNode (SHAMapNodeID const& nodeID, Slice const& rawNode,
                                 SHAMapSyncFilter * filter);
+
 
     // status functions
     void setImmutable ();
@@ -236,8 +273,6 @@ private:
         std::stack<std::pair<std::shared_ptr<SHAMapAbstractNode>, SHAMapNodeID>>;
     using DeltaRef = std::pair<std::shared_ptr<SHAMapItem const> const&,
                                std::shared_ptr<SHAMapItem const> const&>;
-
-    void visitDifferences(SHAMap const* have, std::function<bool(SHAMapAbstractNode&)>) const;
 
      // tree node cache operations
     std::shared_ptr<SHAMapAbstractNode> getCache (SHAMapHash const& hash) const;
@@ -316,7 +351,68 @@ private:
                      bool isFirstMap, Delta & differences, int & maxCount) const;
     int walkSubTree (bool doWrite, NodeObjectType t, std::uint32_t seq);
     bool isInconsistentNode(std::shared_ptr<SHAMapAbstractNode> const& node) const;
+
+    // Structure to track information about call to
+    // getMissingNodes while it's in progress
+    struct MissingNodes
+    {
+        MissingNodes() = delete;
+        MissingNodes(const MissingNodes&) = delete;
+        MissingNodes& operator=(const MissingNodes&) = delete;
+
+        // basic parameters
+        int               max_;
+        SHAMapSyncFilter* filter_;
+        int const         maxDefer_;
+        std::uint32_t     generation_;
+
+        // nodes we have discovered to be missing
+        std::vector<std::pair<SHAMapNodeID, uint256>> missingNodes_;
+        std::set <SHAMapHash>                         missingHashes_;
+
+        // nodes we are in the process of traversing
+        using StackEntry = std::tuple<
+            SHAMapInnerNode*, // pointer to the node
+            SHAMapNodeID,     // the node's ID
+            int,              // while child we check first
+            int,              // which child we check next
+            bool>;            // whether we've found any missing children yet
+
+        // We explicitly choose to specify the use of std::deque here, because
+        // we need to ensure that pointers and/or references to existing elements
+        // will not be invalidated during the course of element insertion and
+        // removal. Containers that do not offer this guarantee, such as
+        // std::vector, can't be used here.
+        std::stack <StackEntry, std::deque<StackEntry>> stack_;
+
+        // nodes we may acquire from deferred reads
+        std::vector <std::tuple <SHAMapInnerNode*, SHAMapNodeID, int>> deferredReads_;
+
+        // nodes we need to resume after we get their children from deferred reads
+        std::map<SHAMapInnerNode*, SHAMapNodeID> resumes_;
+
+        MissingNodes (
+            int max, SHAMapSyncFilter* filter,
+            int maxDefer, std::uint32_t generation) :
+                max_(max), filter_(filter),
+                maxDefer_(maxDefer), generation_(generation)
+        {
+            missingNodes_.reserve (max);
+            deferredReads_.reserve(maxDefer);
+        }
+    };
+
+    // getMissingNodes helper functions
+    void gmn_ProcessNodes (MissingNodes&, MissingNodes::StackEntry& node);
+    void gmn_ProcessDeferredReads (MissingNodes&);
 };
+
+inline
+void
+SHAMap::setFull ()
+{
+    full_ = true;
+}
 
 inline
 void

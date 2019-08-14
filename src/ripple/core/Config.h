@@ -23,12 +23,9 @@
 #include <ripple/basics/BasicConfig.h>
 #include <ripple/basics/base_uint.h>
 #include <ripple/protocol/SystemParameters.h> // VFALCO Breaks levelization
-#include <ripple/protocol/PublicKey.h> // NIKB Breaks levelization (TEMP)
-#include <ripple/protocol/SecretKey.h> // NIKB Breaks levelization (TEMP)
 #include <ripple/beast/net/IPEndpoint.h>
-#include <beast/core/detail/ci_char_traits.hpp>
+#include <boost/beast/core/string.hpp>
 #include <ripple/beast/utility/Journal.h>
-#include <boost/asio/ip/tcp.hpp> // VFALCO FIX: This include should not be here
 #include <boost/filesystem.hpp> // VFALCO FIX: This include should not be here
 #include <boost/lexical_cast.hpp>
 #include <boost/optional.hpp>
@@ -40,8 +37,6 @@
 #include <vector>
 
 namespace ripple {
-
-using namespace std::chrono_literals;
 
 class Rules;
 
@@ -86,12 +81,11 @@ public:
     /** Returns the full path and filename of the debug log file. */
     boost::filesystem::path getDebugLogFile () const;
 
-    /** Returns the full path and filename of the entropy seed file. */
-    boost::filesystem::path getEntropyFile () const;
-
 private:
     boost::filesystem::path CONFIG_FILE;
+public:
     boost::filesystem::path CONFIG_DIR;
+private:
     boost::filesystem::path DEBUG_LOGFILE;
 
     void load ();
@@ -110,8 +104,18 @@ private:
     */
     bool                        RUN_STANDALONE = false;
 
+    /** Determines if the server will sign a tx, given an account's secret seed.
+
+        In the past, this was allowed, but this functionality can have security
+        implications. The new default is to not allow this functionality, but
+        a config option is included to enable this.
+    */
+    bool signingEnabled_ = false;
+
 public:
     bool doImport = false;
+    bool nodeToShard = false;
+    bool validateShards = false;
     bool ELB_SUPPORT = false;
 
     std::vector<std::string>    IPS;                    // Peer IPs from rippled.cfg.
@@ -137,15 +141,14 @@ public:
     int const                   TRANSACTION_FEE_BASE = 10;   // The number of fee units a reference transaction costs
 
     // Note: The following parameters do not relate to the UNL or trust at all
-    std::size_t                 NETWORK_QUORUM = 0;         // Minimum number of nodes to consider the network present
-    int                         VALIDATION_QUORUM = 1;      // Minimum validations to consider ledger authoritative
-    bool                        LOCK_QUORUM = false;        // Do not raise the quorum
+    // Minimum number of nodes to consider the network present
+    std::size_t                 NETWORK_QUORUM = 1;
 
     // Peer networking parameters
     bool                        PEER_PRIVATE = false;           // True to ask peers not to relay current IP.
-    int                         PEERS_MAX = 0;
+    std::size_t                 PEERS_MAX = 0;
 
-    std::chrono::seconds        WEBSOCKET_PING_FREQ = 5min;
+    std::chrono::seconds        WEBSOCKET_PING_FREQ = std::chrono::minutes {5};
 
     // Path searching
     int                         PATH_SEARCH_OLD = 7;
@@ -154,11 +157,7 @@ public:
     int                         PATH_SEARCH_MAX = 10;
 
     // Validation
-    PublicKey                   VALIDATION_PUB;
-    SecretKey                   VALIDATION_PRIV;
-
-    // Node Identity
-    std::string                 NODE_SEED;
+    boost::optional<std::size_t> VALIDATION_QUORUM;     // validations to consider ledger authoritative
 
     std::uint64_t                      FEE_DEFAULT = 10;
     std::uint64_t                      FEE_ACCOUNT_RESERVE = 200*SYSTEM_CURRENCY_PARTS;
@@ -174,14 +173,18 @@ public:
     std::string                 SSL_VERIFY_FILE;
     std::string                 SSL_VERIFY_DIR;
 
+    // Thread pool configuration
+    std::size_t                 WORKERS = 0;
+
     // These override the command line client settings
-    boost::optional<boost::asio::ip::address_v4> rpc_ip;
-    boost::optional<std::uint16_t> rpc_port;
+    boost::optional<beast::IP::Endpoint> rpc_ip;
 
     std::unordered_set<uint256, beast::uhash<>> features;
 
 public:
-    Config() = default;
+    Config()
+    : j_ {beast::Journal::getNullSink()}
+    { }
 
     int getSize (SizedItemName) const;
     /* Be very careful to make sure these bool params
@@ -201,6 +204,8 @@ public:
     bool quiet() const { return QUIET; }
     bool silent() const { return SILENT; }
     bool standalone() const { return RUN_STANDALONE; }
+
+    bool canSign() const { return signingEnabled_; }
 };
 
 } // ripple

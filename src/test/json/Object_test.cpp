@@ -17,14 +17,13 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/json/Object.h>
-#include <ripple/rpc/tests/TestOutputSuite.test.h>
+#include <test/json/TestOutputSuite.h>
 #include <ripple/beast/unit_test.h>
 
 namespace Json {
 
-class JsonObject_test : public ripple::RPC::TestOutputSuite
+class JsonObject_test : public ripple::test::TestOutputSuite
 {
     void setup (std::string const& testName)
     {
@@ -210,13 +209,17 @@ public:
 
     void testKeyFailure ()
     {
-#ifdef DEBUG
         setup ("repeating keys");
         auto& root = makeRoot();
         root.set ("foo", "bar");
         root.set ("baz", 0);
-        auto fail = [&]() { root.set ("foo", "bar"); };
-        expectException (fail);
+        // setting key again throws in !NDEBUG builds
+        auto set_again = [&]() { root.set ("foo", "bar"); };
+#ifdef NDEBUG
+        set_again();
+        pass();
+#else
+        expectException (set_again);
 #endif
     }
 

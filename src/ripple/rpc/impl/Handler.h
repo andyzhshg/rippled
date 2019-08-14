@@ -23,6 +23,7 @@
 #include <ripple/core/Config.h>
 #include <ripple/rpc/RPCHandler.h>
 #include <ripple/rpc/Status.h>
+#include <vector>
 
 namespace Json {
 class Object;
@@ -48,10 +49,9 @@ struct Handler
     Method<Json::Value> valueMethod_;
     Role role_;
     RPC::Condition condition_;
-    Method<Json::Object> objectMethod_;
 };
 
-const Handler* getHandler (std::string const&);
+Handler const* getHandler (std::string const&);
 
 /** Return a Json::objectValue with a single entry. */
 template <class Value>
@@ -62,6 +62,9 @@ Json::Value makeObjectValue (
     result[field] = value;
     return result;
 }
+
+/** Return names of all methods. */
+std::vector<char const*> getHandlerNames();
 
 } // RPC
 } // ripple

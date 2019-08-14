@@ -20,6 +20,11 @@
 #ifndef BEAST_ASIO_SSL_ERROR_H_INCLUDED
 #define BEAST_ASIO_SSL_ERROR_H_INCLUDED
 
+// The first two includes must come first to work around boost 1.62 asio header bugs
+#ifdef _MSC_VER
+#  include <winsock2.h>
+#endif
+#include <boost/asio/ssl/detail/openssl_types.hpp>
 #include <boost/asio.hpp>
 //#include <boost/asio/error.hpp> // Causes error with WinSock.h
 #include <boost/asio/ssl/error.hpp>
@@ -63,8 +68,12 @@ inline
 bool
 is_short_read(boost::system::error_code const& ec)
 {
+#ifdef SSL_R_SHORT_READ
     return (ec.category() == boost::asio::error::get_ssl_category())
         && (ERR_GET_REASON(ec.value()) == SSL_R_SHORT_READ);
+#else
+    return false;
+#endif
 }
 
 } // beast

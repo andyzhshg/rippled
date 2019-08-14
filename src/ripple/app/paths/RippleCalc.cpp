@@ -17,14 +17,12 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/paths/Flow.h>
 #include <ripple/app/paths/RippleCalc.h>
 #include <ripple/app/paths/Tuning.h>
 #include <ripple/app/paths/cursor/PathCursor.h>
 #include <ripple/app/paths/impl/FlowDebugInfo.h>
 #include <ripple/basics/Log.h>
-#include <ripple/core/Config.h>
 #include <ripple/ledger/View.h>
 #include <ripple/protocol/Feature.h>
 
@@ -68,15 +66,14 @@ RippleCalc::Output RippleCalc::rippleCalculate (
     // explore for liquidity.
     STPathSet const& spsPaths,
     Logs& l,
-    Config const& config,
     Input const* const pInputs)
 {
     // call flow v1 and v2 so results may be compared
     bool const compareFlowV1V2 =
-        view.rules ().enabled (featureCompareFlowV1V2, config.features);
+        view.rules ().enabled (featureCompareFlowV1V2);
 
     bool const useFlowV1Output =
-        !view.rules().enabled(featureFlow, config.features);
+        !view.rules().enabled(featureFlow);
     bool const callFlowV1 = useFlowV1Output || compareFlowV1V2;
     bool const callFlowV2 = !useFlowV1Output || compareFlowV1V2;
 
@@ -140,18 +137,23 @@ RippleCalc::Output RippleCalc::rippleCalculate (
         try
         {
             bool const ownerPaysTransferFee =
-                    view.rules ().enabled (featureOwnerPaysFee, config.features);
+                    view.rules ().enabled (featureOwnerPaysFee);
             auto const timeIt = flowV2FlowDebugInfo.timeBlock ("main");
             flowV2Out = flow (flowV2SB, saDstAmountReq, uSrcAccountID,
                 uDstAccountID, spsPaths, defaultPaths, partialPayment,
-                ownerPaysTransferFee, limitQuality, sendMax, j,
+                ownerPaysTransferFee, /* offerCrossing */ false, limitQuality, sendMax, j,
                 compareFlowV1V2 ? &flowV2FlowDebugInfo : nullptr);
         }
         catch (std::exception& e)
         {
-            JLOG (j.trace()) << "Exception from flow" << e.what ();
+            JLOG (j.error()) << "Exception from flow: " << e.what ();
             if (!useFlowV1Output)
-                Rethrow();
+            {
+                // return a tec so the tx is stored
+                path::RippleCalc::Output exceptResult;
+                exceptResult.setResult(tecINTERNAL);
+                return exceptResult;
+            }
         }
     }
 
@@ -330,7 +332,7 @@ TER RippleCalc::rippleCalculate (detail::FlowDebugInfo* flowDebugInfo)
     boost::container::flat_set<uint256> unfundedOffersFromBestPaths;
 
     int iPass = 0;
-    auto const dcSwitch = amendmentRIPD1141(view.info().parentCloseTime);
+    auto const dcSwitch = fix1141(view.info().parentCloseTime);
 
     while (resultCode == temUNCERTAIN)
     {
@@ -379,7 +381,7 @@ TER RippleCalc::rippleCalculate (detail::FlowDebugInfo* flowDebugInfo)
 
                     ++iDry;
                 }
-                else if (pathState->outPass() == zero)
+                else if (pathState->outPass() == beast::zero)
                 {
                     // Path is not dry, but moved no funds
                     // This should never happen. Consider the path dry

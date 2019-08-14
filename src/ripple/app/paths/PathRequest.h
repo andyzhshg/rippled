@@ -25,7 +25,7 @@
 #include <ripple/app/paths/RippleLineCache.h>
 #include <ripple/json/json_value.h>
 #include <ripple/net/InfoSub.h>
-#include <ripple/protocol/types.h>
+#include <ripple/protocol/UintTypes.h>
 #include <boost/optional.hpp>
 #include <map>
 #include <mutex>
@@ -70,7 +70,7 @@ public:
         beast::Journal journal);
 
     // ripple_path_find semantics
-    // Completion function is called
+    // Completion function is called after path update is complete
     PathRequest (
         Application& app,
         std::function <void (void)> const& completion,
@@ -83,6 +83,8 @@ public:
 
     bool isNew ();
     bool needsUpdate (bool newOnly, LedgerIndex index);
+
+    // Called when the PathRequest update is complete.
     void updateComplete ();
 
     std::pair<bool, Json::Value> doCreate (

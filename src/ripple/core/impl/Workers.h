@@ -21,13 +21,19 @@
 #define RIPPLE_CORE_WORKERS_H_INCLUDED
 
 #include <ripple/core/impl/semaphore.h>
-#include <ripple/beast/core/Thread.h>
 #include <ripple/beast/core/LockFreeStack.h>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <thread>
 
 namespace ripple {
+
+namespace perf
+{
+    class PerfLog;
+}
 
 /** A group of threads that process tasks.
 */
@@ -37,15 +43,22 @@ public:
     /** Called to perform tasks as needed. */
     struct Callback
     {
+        virtual ~Callback () = default;
+        Callback() = default;
+        Callback(Callback const&) = delete;
+        Callback& operator=(Callback const&) = delete;
+
         /** Perform a task.
 
             The call is made on a thread owned by Workers. It is important
             that you only process one task from inside your callback. Each
             call to addTask will result in exactly one call to processTask.
 
+            @param instance The worker thread instance.
+
             @see Workers::addTask
         */
-        virtual void processTask () = 0;
+        virtual void processTask (int instance) = 0;
     };
 
     /** Create the object.
@@ -56,6 +69,7 @@ public:
         @param threadNames The name given to each created worker thread.
     */
     explicit Workers (Callback& callback,
+                      perf::PerfLog& perfLog,
                       std::string const& threadNames = "Worker",
                       int numberOfThreads =
                          static_cast<int>(std::thread::hardware_concurrency()));
@@ -106,7 +120,10 @@ public:
     //--------------------------------------------------------------------------
 
 private:
-    struct PausedTag { };
+    struct PausedTag
+    {
+        explicit PausedTag() = default;
+    };
 
     /*  A Worker executes tasks on its provided thread.
 
@@ -119,19 +136,29 @@ private:
     class Worker
         : public beast::LockFreeStack <Worker>::Node
         , public beast::LockFreeStack <Worker, PausedTag>::Node
-        , public beast::Thread
     {
     public:
-        Worker (Workers& workers, std::string const& threadName);
+        Worker (Workers& workers,
+            std::string const& threadName,
+            int const instance);
 
         ~Worker ();
 
+        void notify ();
+
     private:
-        void run () override;
-        void runImpl ();
+        void run ();
 
     private:
         Workers& m_workers;
+        std::string const threadName_;
+        int const instance_;
+
+        std::thread thread_;
+        std::mutex mutex_;
+        std::condition_variable wakeup_;
+        int wakeCount_;               // how many times to un-pause
+        bool shouldExit_;
     };
 
 private:
@@ -139,8 +166,11 @@ private:
 
 private:
     Callback& m_callback;
+    perf::PerfLog& perfLog_;
     std::string m_threadNames;                   // The name to give each thread
-    beast::WaitableEvent m_allPaused;            // signaled when all threads paused
+    std::condition_variable m_cv;                // signaled when all threads paused
+    std::mutex              m_mut;
+    bool                    m_allPaused;
     semaphore m_semaphore;                       // each pending task is 1 resource
     int m_numberOfThreads;                       // how many we want active now
     std::atomic <int> m_activeCount;             // to know when all are paused

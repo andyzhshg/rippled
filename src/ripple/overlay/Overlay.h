@@ -25,7 +25,7 @@
 #include <ripple/overlay/PeerSet.h>
 #include <ripple/server/Handoff.h>
 #include <ripple/beast/asio/ssl_bundle.h>
-#include <beast/http/message.hpp>
+#include <boost/beast/http/message.hpp>
 #include <ripple/core/Stoppable.h>
 #include <ripple/beast/utility/PropertyStream.h>
 #include <memory>
@@ -37,9 +37,6 @@
 namespace boost { namespace asio { namespace ssl { class context; } } }
 
 namespace ripple {
-
-class DatabaseCon;
-class BasicConfig;
 
 /** Manages the set of connected peers. */
 class Overlay
@@ -67,10 +64,13 @@ public:
 
     struct Setup
     {
+        explicit Setup() = default;
+
         std::shared_ptr<boost::asio::ssl::context> context;
         bool expire = false;
         beast::IP::Address public_ip;
         int ipLimit = 0;
+        std::uint32_t crawlOptions = 0;
     };
 
     using PeerSequence = std::vector <std::shared_ptr<Peer>>;
@@ -105,11 +105,6 @@ public:
     std::size_t
     size () = 0;
 
-    /** Returns information reported to the crawl cgi command. */
-    virtual
-    Json::Value
-    crawl() = 0;
-
     /** Return diagnostics on the status of all peers.
         @deprecated This is superceded by PropertyStream
     */
@@ -142,6 +137,11 @@ public:
     std::shared_ptr<Peer>
     findPeerByShortID (Peer::id_t const& id) = 0;
 
+    /** Returns the peer with the matching public key, or null. */
+    virtual
+    std::shared_ptr<Peer>
+    findPeerByPublicKey (PublicKey const& pubKey) = 0;
+
     /** Broadcast a proposal. */
     virtual
     void
@@ -163,15 +163,6 @@ public:
     void
     relay (protocol::TMValidation& m,
         uint256 const& uid) = 0;
-
-    virtual
-    void
-    setupValidatorKeyManifests (BasicConfig const& config,
-                                DatabaseCon& db) = 0;
-
-    virtual
-    void
-    saveValidatorKeyManifests (DatabaseCon& db) const = 0;
 
     /** Visit every active peer and return a value
         The functor must:
@@ -239,6 +230,27 @@ public:
     std::size_t
     selectPeers (PeerSet& set, std::size_t limit, std::function<
         bool(std::shared_ptr<Peer> const&)> score) = 0;
+
+    /** Increment and retrieve counter for transaction job queue overflows. */
+    virtual void incJqTransOverflow() = 0;
+    virtual std::uint64_t getJqTransOverflow() const = 0;
+
+    /** Increment and retrieve counters for total peer disconnects, and
+     * disconnects we initiate for excessive resource consumption.
+    */
+    virtual void incPeerDisconnect() = 0;
+    virtual std::uint64_t getPeerDisconnect() const = 0;
+    virtual void incPeerDisconnectCharges() = 0;
+    virtual std::uint64_t getPeerDisconnectCharges() const = 0;
+
+    /** Returns information reported to the crawl shard RPC command.
+
+        @param hops the maximum jumps the crawler will attempt.
+        The number of hops achieved is not guaranteed.
+    */
+    virtual
+    Json::Value
+    crawlShards(bool pubKey, std::uint32_t hops) = 0;
 };
 
 struct ScoreHasLedger

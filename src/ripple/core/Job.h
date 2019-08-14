@@ -21,6 +21,9 @@
 #define RIPPLE_CORE_JOB_H_INCLUDED
 
 #include <ripple/core/LoadMonitor.h>
+#include <functional>
+
+#include <functional>
 
 namespace ripple {
 
@@ -48,7 +51,6 @@ enum JobType
     jtUPDATE_PF,     // Update pathfinding requests
     jtTRANSACTION,   // A transaction received from the network
     jtBATCH,         // Apply batched transactions
-    jtUNL,           // A Score or Fetch of the UNL (DEPRECATED)
     jtADVANCE,       // Advance validated/acquired ledgers
     jtPUBLEDGER,     // Publish a fully-accepted ledger
     jtTXN_DATA,      // Fetch a proposed set
@@ -135,14 +137,11 @@ public:
     bool operator>= (const Job& j) const;
 
 private:
-    void doJobImpl();
-
-private:
     CancelCallback m_cancelCallback;
     JobType                     mType;
     std::uint64_t               mJobIndex;
     std::function <void (Job&)> mJob;
-    LoadEvent::pointer          m_loadEvent;
+    std::shared_ptr<LoadEvent>  m_loadEvent;
     std::string                 mName;
     clock_type::time_point m_queue_time;
 };

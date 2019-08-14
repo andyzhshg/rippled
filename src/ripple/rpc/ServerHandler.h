@@ -40,12 +40,11 @@ using ServerHandler = ServerHandlerImp;
 ServerHandler::Setup
 setup_ServerHandler (
     Config const& c,
-    std::ostream& log);
+    std::ostream&& log);
 
 std::unique_ptr <ServerHandler>
 make_ServerHandler (Application& app, Stoppable& parent, boost::asio::io_service&,
-    JobQueue&, NetworkOPs&, Resource::Manager&,
-        CollectorManager& cm);
+    JobQueue&, NetworkOPs&, Resource::Manager&, CollectorManager& cm);
 
 } // ripple
 

@@ -40,28 +40,6 @@ namespace ripple {
 
 class STArray;
 
-/** Thrown on illegal access to non-present SField. */
-struct missing_field_error : std::logic_error
-{
-    explicit
-    missing_field_error (SField const& f)
-        : logic_error(
-            "missing field '" + f.getName() + "'")
-    {
-    }
-};
-
-/** Thrown on a field template violation. */
-struct template_field_error : std::logic_error
-{
-    explicit
-    template_field_error (SField const& f)
-        : logic_error(
-            "template field error '" + f.getName() + "'")
-    {
-    }
-};
-
 //------------------------------------------------------------------------------
 
 class STObject
@@ -78,7 +56,7 @@ private:
             typename T::value_type;
 
         STObject* st_;
-        SOE_Flags style_;
+        SOEStyle style_;
         TypedField<T> const* f_;
 
         Proxy (Proxy const&) = default;
@@ -98,6 +76,7 @@ private:
             typename T::value_type;
 
     public:
+        ValueProxy(ValueProxy const&) = default;
         ValueProxy& operator= (ValueProxy const&) = delete;
 
         template <class U>
@@ -125,11 +104,12 @@ private:
             typename std::decay<value_type>::type>;
 
     public:
+        OptionalProxy(OptionalProxy const&) = default;
         OptionalProxy& operator= (OptionalProxy const&) = delete;
 
         /** Returns `true` if the field is set.
 
-            Fields with SOE_DEFAULT and set to the
+            Fields with soeDEFAULT and set to the
             default value will return `true`
         */
         explicit operator bool() const noexcept;
@@ -138,7 +118,7 @@ private:
 
             Throws:
 
-                missing_field_error if !engaged()
+                STObject::FieldErr if !engaged()
         */
         value_type operator*() const;
 
@@ -249,6 +229,8 @@ private:
 
     struct Transform
     {
+        explicit Transform() = default;
+
         using argument_type = detail::STVar;
         using result_type = STBase;
 
@@ -273,14 +255,21 @@ public:
     using iterator = boost::transform_iterator<
         Transform, STObject::list_type::const_iterator>;
 
+    class FieldErr : public std::runtime_error
+    {
+        using std::runtime_error::runtime_error;
+    };
+
     static char const* getCountedObjectName () { return "STObject"; }
 
     STObject(STObject&&);
     STObject(STObject const&) = default;
     STObject (const SOTemplate & type, SField const& name);
-    STObject (const SOTemplate & type, SerialIter & sit, SField const& name);
-    STObject (SerialIter& sit, SField const& name);
-    STObject (SerialIter&& sit, SField const& name)
+    STObject (const SOTemplate& type,
+        SerialIter& sit, SField const& name) noexcept (false);
+    STObject (SerialIter& sit,
+        SField const& name, int depth = 0) noexcept (false);
+    STObject (SerialIter&& sit, SField const& name) noexcept (false)
         : STObject(sit, name)
     {
     }
@@ -323,15 +312,10 @@ public:
         v_.reserve (n);
     }
 
-    bool setType (const SOTemplate & type);
+    void applyTemplate (const SOTemplate & type) noexcept (false);
 
-    enum ResultOfSetTypeFromSField : unsigned char
-    {typeSetFail, typeIsSet, noTemplate};
+    void applyTemplateFromSField (SField const&) noexcept (false);
 
-    ResultOfSetTypeFromSField setTypeFromSField (SField const&);
-
-    bool isValidForType ();
-    bool isFieldAllowed (SField const&);
     bool isFree () const
     {
         return mType == nullptr;
@@ -352,12 +336,12 @@ public:
 
     virtual void add (Serializer & s) const override
     {
-        add (s, true);    // just inner elements
+        add (s, withAllFields);    // just inner elements
     }
 
     void addWithoutSigningFields (Serializer & s) const
     {
-        add (s, false);
+        add (s, omitSigningFields);
     }
 
     // VFALCO NOTE does this return an expensive copy of an object with a
@@ -366,7 +350,7 @@ public:
     Serializer getSerializer () const
     {
         Serializer s;
-        add (s, true);
+        add (s, withAllFields);
         return s;
     }
 
@@ -374,7 +358,7 @@ public:
     virtual std::string getText () const override;
 
     // TODO(tom): options should be an enum.
-    virtual Json::Value getJson (int options) const override;
+    virtual Json::Value getJson (JsonOptions options) const override;
 
     template <class... Args>
     std::size_t
@@ -424,7 +408,6 @@ public:
 
     // these throw if the field type doesn't match, or return default values
     // if the field is optional but not present
-    std::string getFieldString (SField const& field) const;
     unsigned char getFieldU8 (SField const& field) const;
     std::uint16_t getFieldU16 (SField const& field) const;
     std::uint32_t getFieldU32 (SField const& field) const;
@@ -440,13 +423,12 @@ public:
     STPathSet const& getFieldPathSet (SField const& field) const;
     const STVector256& getFieldV256 (SField const& field) const;
     const STArray& getFieldArray (SField const& field) const;
-    const STObject& getFieldObject (SField const& field) const;
 
     /** Return the value of a field.
 
         Throws:
 
-            missing_field_error if the field is
+            STObject::FieldErr if the field is
             not present.
     */
     template<class T>
@@ -465,7 +447,7 @@ public:
 
         Throws:
 
-            missing_field_error if the field is
+            STObject::FieldErr if the field is
             not present.
     */
     template<class T>
@@ -502,7 +484,6 @@ public:
     void setFieldPathSet (SField const& field, STPathSet const&);
     void setFieldV256 (SField const& field, STVector256 const& v);
     void setFieldArray (SField const& field, STArray const& v);
-    void setFieldObject (SField const& field, STObject const& v);
 
     template <class Tag>
     void setFieldH160 (SField const& field, base_uint<160, Tag> const& v)
@@ -540,23 +521,22 @@ public:
     }
 
 private:
-    void add (Serializer & s, bool withSigningFields) const;
+    enum WhichFields : bool
+    {
+        // These values are carefully chosen to do the right thing if passed
+        // to SField::shouldInclude (bool)
+        omitSigningFields = false,
+        withAllFields = true
+    };
+
+    void add (Serializer & s, WhichFields whichFields) const;
 
     // Sort the entries in an STObject into the order that they will be
     // serialized.  Note: they are not sorted into pointer value order, they
     // are sorted by SField::fieldCode.
     static std::vector<STBase const*>
-    getSortedFields (STObject const& objToSort);
-
-    // Two different ways to compare STObjects.
-    //
-    // This one works only if the SOTemplates are the same.  Presumably it
-    // runs faster since there's no sorting.
-    static bool equivalentSTObjectSameTemplate (
-        STObject const& obj1, STObject const& obj2);
-
-    // This way of comparing STObjects always works, but is slower.
-    static bool equivalentSTObject (STObject const& obj1, STObject const& obj2);
+    getSortedFields (
+        STObject const& objToSort, WhichFields whichFields);
 
     // Implementation for getting (most) fields that return by value.
     //
@@ -686,12 +666,13 @@ STObject::Proxy<T>::Proxy (STObject* st, TypedField<T> const* f)
     {
         // STObject has associated template
         if (! st_->peekAtPField(*f_))
-            Throw<template_field_error> (*f);
+            Throw<STObject::FieldErr> (
+                "Template field error '" + this->f_->getName() + "'");
         style_ = st_->mType->style(*f_);
     }
     else
     {
-        style_ = SOE_INVALID;
+        style_ = soeINVALID;
     }
 }
 
@@ -703,8 +684,9 @@ STObject::Proxy<T>::value() const ->
     auto const t = find();
     if (t)
         return t->value();
-    if (style_ != SOE_DEFAULT)
-        Throw<missing_field_error> (*f_);
+    if (style_ != soeDEFAULT)
+        Throw<STObject::FieldErr> (
+            "Missing field '" + this->f_->getName() + "'");
     return value_type{};
 }
 
@@ -722,14 +704,14 @@ template <class U>
 void
 STObject::Proxy<T>::assign(U&& u)
 {
-    if (style_ == SOE_DEFAULT &&
+    if (style_ == soeDEFAULT &&
         u == value_type{})
     {
         st_->makeFieldAbsent(*f_);
         return;
     }
     T* t;
-    if (style_ == SOE_INVALID)
+    if (style_ == soeINVALID)
         t = dynamic_cast<T*>(
             st_->getPField(*f_, true));
     else
@@ -850,7 +832,7 @@ template <class T>
 bool
 STObject::OptionalProxy<T>::engaged() const noexcept
 {
-    return this->style_ == SOE_DEFAULT
+    return this->style_ == soeDEFAULT
         || this->find() != nullptr;
 }
 
@@ -858,10 +840,11 @@ template <class T>
 void
 STObject::OptionalProxy<T>::disengage()
 {
-    if (this->style_ == SOE_REQUIRED ||
-            this->style_ == SOE_DEFAULT)
-        Throw<template_field_error> (*this->f_);
-    if (this->style_ == SOE_INVALID)
+    if (this->style_ == soeREQUIRED ||
+            this->style_ == soeDEFAULT)
+        Throw<STObject::FieldErr> (
+            "Template field error '" + this->f_->getName() + "'");
+    if (this->style_ == soeINVALID)
         this->st_->delField(*this->f_);
     else
         this->st_->makeFieldAbsent(*this->f_);
@@ -887,16 +870,18 @@ STObject::operator[](TypedField<T> const& f) const
     if (! b)
         // This is a free object (no constraints)
         // with no template
-        Throw<missing_field_error> (f);
+        Throw<STObject::FieldErr> (
+            "Missing field '" + f.getName() + "'");
     auto const u =
         dynamic_cast<T const*>(b);
     if (! u)
     {
         assert(mType);
         assert(b->getSType() == STI_NOTPRESENT);
-        if(mType->style(f) == SOE_OPTIONAL)
-            Throw<missing_field_error> (f);
-        assert(mType->style(f) == SOE_DEFAULT);
+        if(mType->style(f) == soeOPTIONAL)
+            Throw<STObject::FieldErr> (
+                "Missing field '" + f.getName() + "'");
+        assert(mType->style(f) == soeDEFAULT);
         // Handle the case where value_type is a
         // const reference, otherwise we return
         // the address of a temporary.
@@ -920,9 +905,9 @@ STObject::operator[](OptionaledField<T> const& of) const
     {
         assert(mType);
         assert(b->getSType() == STI_NOTPRESENT);
-        if(mType->style(*of.f) == SOE_OPTIONAL)
+        if(mType->style(*of.f) == soeOPTIONAL)
             return boost::none;
-        assert(mType->style(*of.f) == SOE_DEFAULT);
+        assert(mType->style(*of.f) == soeDEFAULT);
         return typename T::value_type{};
     }
     return u->value();

@@ -17,14 +17,10 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/core/impl/SNTPClock.h>
 #include <ripple/basics/Log.h>
-#include <ripple/basics/ThreadName.h>
 #include <ripple/basics/random.h>
-#include <ripple/beast/core/Thread.h>
-#include <ripple/core/ThreadEntry.h>
-#include <beast/core/placeholders.hpp>
+#include <ripple/beast/core/CurrentThreadName.h>
 #include <boost/asio.hpp>
 #include <boost/optional.hpp>
 #include <cmath>
@@ -35,8 +31,6 @@
 #include <thread>
 
 namespace ripple {
-
-// #define SNTP_DEBUG
 
 static uint8_t SNTPQueryData[48] =
 { 0x1B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -86,7 +80,7 @@ private:
         sys_seconds sent;
         std::uint32_t nonce;
 
-        Query (sys_seconds j = sys_seconds::max())
+        explicit Query (sys_seconds j = sys_seconds::max())
             : replied (false)
             , sent (j)
         {
@@ -127,7 +121,7 @@ public:
     {
     }
 
-    ~SNTPClientImp ()
+    ~SNTPClientImp () override
     {
         if (thread_.joinable())
         {
@@ -163,19 +157,17 @@ public:
 
         using namespace boost::asio;
         socket_.open (ip::udp::v4 ());
+        socket_.bind (ep_);
         socket_.async_receive_from (buffer (buf_, 256),
             ep_, std::bind(
                 &SNTPClientImp::onRead, this,
-                    beast::asio::placeholders::error,
-                        beast::asio::placeholders::bytes_transferred));
+                    std::placeholders::_1,
+                        std::placeholders::_2));
         timer_.expires_from_now(NTP_QUERY_FREQUENCY);
         timer_.async_wait(std::bind(
             &SNTPClientImp::onTimer, this,
-                beast::asio::placeholders::error));
+                std::placeholders::_1));
 
-        // VFALCO Is it correct to launch the thread
-        //        here after queuing I/O?
-        //
         thread_ = std::thread(&SNTPClientImp::doRun, this);
     }
 
@@ -203,13 +195,8 @@ public:
 
     void doRun ()
     {
-        setCallingThreadName("SNTPClock");
-
-        // Get the address of an overloaded asio method
-        using Pio_service_mem = std::size_t (boost::asio::io_service::*)();
-        Pio_service_mem pRun = &boost::asio::io_service::run;
-
-        threadEntry (&io_service_, pRun, "SNTPClientImp::doRun()");
+        beast::setCurrentThreadName("rippled: SNTPClock");
+        io_service_.run();
     }
 
     void
@@ -229,7 +216,7 @@ public:
         timer_.expires_from_now(NTP_QUERY_FREQUENCY);
         timer_.async_wait(std::bind(
             &SNTPClientImp::onTimer, this,
-                beast::asio::placeholders::error));
+                std::placeholders::_1));
     }
 
     void
@@ -293,8 +280,8 @@ public:
 
         socket_.async_receive_from(buffer(buf_, 256),
             ep_, std::bind(&SNTPClientImp::onRead, this,
-                beast::asio::placeholders::error,
-                    beast::asio::placeholders::bytes_transferred));
+                std::placeholders::_1,
+                    std::placeholders::_2));
     }
 
     //--------------------------------------------------------------------------
@@ -346,8 +333,8 @@ public:
             boost::asio::ip::udp::v4 (), best->first, "ntp");
         resolver_.async_resolve (query, std::bind (
             &SNTPClientImp::resolveComplete, this,
-                beast::asio::placeholders::error,
-                    beast::asio::placeholders::iterator));
+                std::placeholders::_1,
+                    std::placeholders::_2));
         JLOG(j_.trace()) <<
             "SNTPClock: Resolve pending for " << best->first;
         return true;
@@ -403,8 +390,8 @@ public:
             reinterpret_cast<std::uint32_t*> (SNTPQueryData)[NTP_OFF_XMITTS_FRAC] = query.nonce;
             socket_.async_send_to(buffer(SNTPQueryData, 48),
                 *sel, std::bind (&SNTPClientImp::onSend, this,
-                    beast::asio::placeholders::error,
-                        beast::asio::placeholders::bytes_transferred));
+                    std::placeholders::_1,
+                        std::placeholders::_2));
         }
     }
 

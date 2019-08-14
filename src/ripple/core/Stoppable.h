@@ -22,13 +22,17 @@
 
 #include <ripple/beast/core/LockFreeStack.h>
 #include <ripple/beast/utility/Journal.h>
-#include <ripple/beast/core/WaitableEvent.h>
+#include <ripple/core/Job.h>
+#include <ripple/core/ClosureCounter.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 
 namespace ripple {
+
+// Give a reasonable name for the JobCounter
+using JobCounter = ClosureCounter<void, Job&>;
 
 class RootStoppable;
 
@@ -44,7 +48,7 @@ class RootStoppable;
     provides a set of behaviors for ensuring that the start and stop of a
     composite application-style object is well defined.
 
-    Upon the initialization of the composite object these steps are peformed:
+    Upon the initialization of the composite object these steps are performed:
 
     1.  Construct sub-components.
 
@@ -125,7 +129,7 @@ class RootStoppable;
         For stoppables which are only considered stopped when all of their
         children have stopped, and their own internal logic indicates a stop, it
         will be necessary to perform special actions in onChildrenStopped(). The
-        funtion areChildrenStopped() can be used after children have stopped,
+        function areChildrenStopped() can be used after children have stopped,
         but before the Stoppable logic itself has stopped, to determine if the
         stoppable's logic is a true stop.
 
@@ -167,16 +171,40 @@ class RootStoppable;
         when the last thread is about to exit it would call stopped().
 
     @note A Stoppable may not be restarted.
+
+    The form of the Stoppable tree in the rippled application evolves as
+    the source code changes and reacts to new demands.  As of March in 2017
+    the Stoppable tree had this form:
+
+    @code
+
+                                   Application
+                                        |
+                   +--------------------+--------------------+
+                   |                    |                    |
+              LoadManager          SHAMapStore       NodeStoreScheduler
+                                                             |
+                                                         JobQueue
+                                                             |
+        +-----------+-----------+-----------+-----------+----+--------+
+        |           |           |           |           |             |
+        |       NetworkOPs      |     InboundLedgers    |        OrderbookDB
+        |                       |                       |
+     Overlay           InboundTransactions        LedgerMaster
+        |                                               |
+    PeerFinder                                   LedgerCleaner
+
+    @endcode
 */
 /** @{ */
 class Stoppable
 {
 protected:
-    Stoppable (char const* name, RootStoppable& root);
+    Stoppable (std::string name, RootStoppable& root);
 
 public:
     /** Create the Stoppable. */
-    Stoppable (char const* name, Stoppable& parent);
+    Stoppable (std::string name, Stoppable& parent);
 
     /** Destroy the Stoppable. */
     virtual ~Stoppable ();
@@ -190,14 +218,16 @@ public:
     /** Returns `true` if all children have stopped. */
     bool areChildrenStopped () const;
 
+    /* JobQueue uses this method for Job counting. */
+    inline JobCounter& jobCounter ();
+
     /** Sleep or wake up on stop.
 
         @return `true` if we are stopping
     */
-    template <class Rep, class Period>
     bool
-    alertable_sleep_for(
-        std::chrono::duration<Rep, Period> const& d);
+    alertable_sleep_until(
+        std::chrono::system_clock::time_point const& t);
 
 protected:
     /** Called by derived classes to indicate that the stoppable has stopped. */
@@ -282,11 +312,12 @@ private:
     std::string m_name;
     RootStoppable& m_root;
     Child m_child;
-    std::atomic<bool> m_started;
-    std::atomic<bool> m_stopped;
-    std::atomic<bool> m_childrenStopped;
+    std::atomic<bool> m_stopped {false};
+    std::atomic<bool> m_childrenStopped {false};
     Children m_children;
-    beast::WaitableEvent m_stoppedEvent;
+    std::condition_variable m_cv;
+    std::mutex              m_mut;
+    bool                    m_is_stopping = false;
 };
 
 //------------------------------------------------------------------------------
@@ -294,9 +325,9 @@ private:
 class RootStoppable : public Stoppable
 {
 public:
-    explicit RootStoppable (char const* name);
+    explicit RootStoppable (std::string name);
 
-    ~RootStoppable () = default;
+    virtual ~RootStoppable ();
 
     bool isStopping() const;
 
@@ -326,51 +357,72 @@ public:
     */
     void stop (beast::Journal j);
 
+    /** Return true if start() was ever called. */
+    bool started () const
+    {
+        return m_started;
+    }
+
+    /* JobQueue uses this method for Job counting. */
+    JobCounter& rootJobCounter ()
+    {
+        return jobCounter_;
+    }
+
     /** Sleep or wake up on stop.
 
         @return `true` if we are stopping
     */
-    template <class Rep, class Period>
     bool
-    alertable_sleep_for(
-        std::chrono::duration<Rep, Period> const& d);
+    alertable_sleep_until(
+        std::chrono::system_clock::time_point const& t);
 
 private:
     /*  Notify a root stoppable and children to stop, without waiting.
         Has no effect if the stoppable was already notified.
 
+        Returns true on the first call to this method, false otherwise.
+
         Thread safety:
             Safe to call from any thread at any time.
     */
-    void stopAsync(beast::Journal j);
+    bool stopAsync(beast::Journal j);
 
-    std::atomic<bool> m_prepared;
-    bool m_calledStop;
-    std::atomic<bool> m_calledStopAsync;
+    std::atomic<bool> m_prepared {false};
+    std::atomic<bool> m_started {false};
+    std::atomic<bool> m_calledStop {false};
     std::mutex m_;
     std::condition_variable c_;
+    JobCounter jobCounter_;
 };
 /** @} */
 
 //------------------------------------------------------------------------------
 
-template <class Rep, class Period>
+JobCounter& Stoppable::jobCounter ()
+{
+    return m_root.rootJobCounter();
+}
+
+//------------------------------------------------------------------------------
+
+inline
 bool
-RootStoppable::alertable_sleep_for(
-    std::chrono::duration<Rep, Period> const& d)
+RootStoppable::alertable_sleep_until(
+    std::chrono::system_clock::time_point const& t)
 {
     std::unique_lock<std::mutex> lock(m_);
     if (m_calledStop)
         return true;
-    return c_.wait_for(lock, d, [this]{return m_calledStop;});
+    return c_.wait_until(lock, t, [this]{return m_calledStop.load();});
 }
 
-template <class Rep, class Period>
+inline
 bool
-Stoppable::alertable_sleep_for(
-    std::chrono::duration<Rep, Period> const& d)
+Stoppable::alertable_sleep_until(
+    std::chrono::system_clock::time_point const& t)
 {
-    return m_root.alertable_sleep_for(d);
+    return m_root.alertable_sleep_until(t);
 }
 
 } // ripple

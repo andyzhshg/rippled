@@ -39,13 +39,13 @@ public:
     ConsensusTransSetSF (Application& app, NodeCache& nodeCache);
 
     // Note that the nodeData is overwritten by this call
-    void gotNode (bool fromFilter,
-                  SHAMapHash const& nodeHash,
-                  Blob&& nodeData,
-                  SHAMapTreeNode::TNType) const override;
+    void
+    gotNode(bool fromFilter, SHAMapHash const& nodeHash,
+        std::uint32_t ledgerSeq, Blob&& nodeData,
+            SHAMapTreeNode::TNType type) const override;
 
-    bool haveNode (SHAMapHash const& nodeHash,
-                   Blob& nodeData) const override;
+    boost::optional<Blob>
+    getNode (SHAMapHash const& nodeHash) const override;
 
 private:
     Application& app_;

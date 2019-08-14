@@ -60,7 +60,7 @@ struct TAmounts
     bool
     empty() const noexcept
     {
-        return in <= zero || out <= zero;
+        return in <= beast::zero || out <= beast::zero;
     }
 
     TAmounts& operator+=(TAmounts const& rhs)
@@ -124,6 +124,9 @@ public:
     // have lower unsigned integer representations.
     using value_type = std::uint64_t;
 
+    static const int minTickSize = 3;
+    static const int maxTickSize = 16;
+
 private:
     value_type m_value;
 
@@ -169,6 +172,12 @@ public:
     {
         return amountFromQuality (m_value);
     }
+
+    /** Returns the quality rounded up to the specified number
+        of decimal digits.
+    */
+    Quality
+    round (int tickSize) const;
 
     /** Returns the scaled amount with in capped.
         Math is avoided if the result is exact. The output is clamped
@@ -230,6 +239,20 @@ public:
     operator> (Quality const& lhs, Quality const& rhs) noexcept
     {
         return lhs.m_value < rhs.m_value;
+    }
+
+    friend
+    bool
+    operator<= (Quality const& lhs, Quality const& rhs) noexcept
+    {
+        return !(lhs > rhs);
+    }
+
+    friend
+    bool
+    operator>= (Quality const& lhs, Quality const& rhs) noexcept
+    {
+        return !(lhs < rhs);
     }
 
     friend

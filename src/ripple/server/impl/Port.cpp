@@ -17,18 +17,12 @@
 */
 //==============================================================================
 
+#include <ripple/basics/safe_cast.h>
 #include <ripple/server/Port.h>
 #include <ripple/beast/rfc2616.h>
 #include <ripple/beast/core/LexicalCast.h>
 
 namespace ripple {
-
-// Detects legacy websockets only.
-bool
-Port::websockets() const
-{
-    return protocol.count("ws") > 0 || protocol.count("wss") > 0;
-}
 
 bool
 Port::secure() const
@@ -94,7 +88,7 @@ populate (Section const& section, std::string const& field, std::ostream& log,
             if (! addr.second)
             {
                 log << "Invalid value '" << ip << "' for key '" << field <<
-                    "' in [" << section.name () << "]\n";
+                    "' in [" << section.name () << "]";
                 Throw<std::exception> ();
             }
 
@@ -102,9 +96,9 @@ populate (Section const& section, std::string const& field, std::ostream& log,
             {
                 if (! allowAllIps)
                 {
-                    log << "0.0.0.0 not allowed'" <<
+                    log << addr.first.address() << " not allowed'" <<
                         "' for key '" << field << "' in [" <<
-                        section.name () << "]\n";
+                        section.name () << "]";
                     Throw<std::exception> ();
                 }
                 else
@@ -115,9 +109,9 @@ populate (Section const& section, std::string const& field, std::ostream& log,
 
             if (has_any && ! ips->empty ())
             {
-                log << "IP specified along with 0.0.0.0 '" << ip <<
-                    "' for key '" << field << "' in [" <<
-                    section.name () << "]\n";
+                log << "IP specified along with " << addr.first.address() <<
+                    " '" << ip << "' for key '" << field << "' in [" <<
+                    section.name () << "]";
                 Throw<std::exception> ();
             }
 
@@ -130,7 +124,7 @@ populate (Section const& section, std::string const& field, std::ostream& log,
                 ) != admin_ip.end())
             {
                 log << "IP specified for " << field << " is also for " <<
-                    "admin: " << ip << " in [" << section.name() << "]\n";
+                    "admin: " << ip << " in [" << section.name() << "]";
                 Throw<std::exception> ();
             }
 
@@ -153,7 +147,7 @@ parse_Port (ParsedPort& port, Section const& section, std::ostream& log)
             catch (std::exception const&)
             {
                 log << "Invalid value '" << result.first <<
-                    "' for key 'ip' in [" << section.name() << "]\n";
+                    "' for key 'ip' in [" << section.name() << "]";
                 Rethrow();
             }
         }
@@ -176,7 +170,7 @@ parse_Port (ParsedPort& port, Section const& section, std::ostream& log)
             {
                 log <<
                     "Invalid value '" << result.first << "' for key " <<
-                    "'port' in [" << section.name() << "]\n";
+                    "'port' in [" << section.name() << "]";
                 Rethrow();
             }
         }
@@ -195,20 +189,48 @@ parse_Port (ParsedPort& port, Section const& section, std::ostream& log)
     {
         auto const lim = get (section, "limit", "unlimited");
 
-        if (!beast::detail::ci_equal (lim, "unlimited"))
+        if (!boost::beast::detail::iequals (lim, "unlimited"))
         {
             try
             {
-                port.limit = static_cast<int> (
+                port.limit = safe_cast<int> (
                     beast::lexicalCastThrow<std::uint16_t>(lim));
             }
             catch (std::exception const&)
             {
                 log <<
                     "Invalid value '" << lim << "' for key " <<
-                    "'limit' in [" << section.name() << "]\n";
+                    "'limit' in [" << section.name() << "]";
                 Rethrow();
             }
+        }
+    }
+
+    {
+        auto const result = section.find("send_queue_limit");
+        if (result.second)
+        {
+            try
+            {
+                port.ws_queue_limit =
+                    beast::lexicalCastThrow<std::uint16_t>(result.first);
+
+                // Queue must be greater than 0
+                if (port.ws_queue_limit == 0)
+                    Throw<std::exception>();
+            }
+            catch (std::exception const&)
+            {
+                log <<
+                    "Invalid value '" << result.first << "' for key " <<
+                    "'send_queue_limit' in [" << section.name() << "]";
+                Rethrow();
+            }
+        }
+        else
+        {
+            // Default Websocket send queue size limit
+            port.ws_queue_limit = 100;
         }
     }
 
@@ -223,6 +245,22 @@ parse_Port (ParsedPort& port, Section const& section, std::ostream& log)
     set(port.ssl_key, "ssl_key", section);
     set(port.ssl_cert, "ssl_cert", section);
     set(port.ssl_chain, "ssl_chain", section);
+    set(port.ssl_ciphers, "ssl_ciphers", section);
+
+    port.pmd_options.server_enable =
+        section.value_or("permessage_deflate", true);
+    port.pmd_options.client_max_window_bits =
+        section.value_or("client_max_window_bits", 15);
+    port.pmd_options.server_max_window_bits =
+        section.value_or("server_max_window_bits", 15);
+    port.pmd_options.client_no_context_takeover =
+        section.value_or("client_no_context_takeover", false);
+    port.pmd_options.server_no_context_takeover =
+        section.value_or("server_no_context_takeover", false);
+    port.pmd_options.compLevel =
+        section.value_or("compress_level", 8);
+    port.pmd_options.memLevel =
+        section.value_or("memory_level", 4);
 }
 
 } // ripple

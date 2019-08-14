@@ -21,52 +21,91 @@
 #define RIPPLE_RPC_JSON_BODY_H
 
 #include <ripple/json/json_value.h>
-#include <beast/core/streambuf.hpp>
-#include <beast/http/body_type.hpp>
+#include <ripple/json/to_string.h>
+
+#include <boost/beast/core/multi_buffer.hpp>
+#include <boost/beast/http/message.hpp>
 
 namespace ripple {
 
 /// Body that holds JSON
 struct json_body
 {
+    explicit json_body() = default;
+
     using value_type = Json::Value;
 
-    class writer
+    class reader
     {
-        beast::streambuf sb_;
+        using dynamic_buffer_type = boost::beast::multi_buffer;
+
+        dynamic_buffer_type buffer_;
 
     public:
-        template<bool isRequest, class Headers>
+        using const_buffers_type =
+            typename dynamic_buffer_type::const_buffers_type;
+
+        using is_deferred = std::false_type;
+
+        template<bool isRequest, class Fields>
         explicit
-        writer(beast::http::message<
-            isRequest, json_body, Headers> const& m)
+        reader(boost::beast::http::message<
+            isRequest, json_body, Fields> const& m)
         {
             stream(m.body,
                 [&](void const* data, std::size_t n)
                 {
-                    sb_.commit(boost::asio::buffer_copy(
-                        sb_.prepare(n), boost::asio::buffer(data, n)));
+                    buffer_.commit(boost::asio::buffer_copy(
+                        buffer_.prepare(n), boost::asio::buffer(data, n)));
                 });
         }
 
         void
-        init(beast::error_code&)
+        init(boost::beast::error_code&) noexcept
         {
         }
 
-        std::uint64_t
-        content_length() const
+        boost::optional<std::pair<const_buffers_type, bool>>
+        get(boost::beast::error_code& ec)
         {
-            return sb_.size();
+            return {{buffer_.data(), false}};
         }
 
-        template<class Write>
-        boost::tribool
-        operator()(beast::http::resume_context&&,
-            beast::error_code&, Write&& write)
+        void
+        finish(boost::beast::error_code&)
         {
-            write(sb_.data());
-            return true;
+        }
+    };
+
+    class writer
+    {
+        std::string body_string_;
+
+    public:
+        using const_buffers_type =
+            boost::asio::const_buffer;
+
+        template <bool isRequest, class Fields>
+        explicit
+        writer(
+            boost::beast::http::header<isRequest, Fields> const& fields,
+            value_type const& value)
+                : body_string_(to_string(value))
+        {
+        }
+
+        void
+        init(boost::beast::error_code& ec)
+        {
+            ec.assign(0, ec.category());
+        }
+
+        boost::optional<std::pair<const_buffers_type, bool>>
+        get(boost::beast::error_code& ec)
+        {
+            ec.assign(0, ec.category());
+            return {{const_buffers_type{
+                body_string_.data(), body_string_.size()}, false}};
         }
     };
 };

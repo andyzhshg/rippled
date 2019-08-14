@@ -1,5 +1,9 @@
 # .gitignore
 
+bin/boostbook_catalog.xml
+bin/config.log
+bin/project-cache.jam
+
 # Ignore vim swap files.
 *.swp
 
@@ -18,6 +22,7 @@
 # Ignore object files.
 *.o
 build
+.nih_c
 tags
 TAGS
 bin/rippled
@@ -28,9 +33,6 @@ Release/*.*
 *.gcno
 *.gcda
 *.gcov
-
-# Ignore locally installed node_modules
-/node_modules
 
 # Ignore tmp directory.
 tmp
@@ -46,10 +48,10 @@ debug_log.txt
 # Ignore customized configs
 rippled.cfg
 validators.txt
-test/config.js
 
 # Doxygen generated documentation output
 HtmlDocumentation
+docs/html_doc
 
 # Xcode user-specific project settings
 # Xcode
@@ -89,3 +91,6 @@ Builds/VisualStudio2015/*.sdf
 
 # MSVC
 *.pdb
+.vs/
+CMakeSettings.json
+compile_commands.json

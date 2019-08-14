@@ -40,6 +40,8 @@ Json::Value doChannelAuthorize      (RPC::Context&);
 Json::Value doChannelVerify         (RPC::Context&);
 Json::Value doConnect               (RPC::Context&);
 Json::Value doConsensusInfo         (RPC::Context&);
+Json::Value doDepositAuthorized     (RPC::Context&);
+Json::Value doDownloadShard         (RPC::Context&);
 Json::Value doFeature               (RPC::Context&);
 Json::Value doFee                   (RPC::Context&);
 Json::Value doFetchInfo             (RPC::Context&);
@@ -65,10 +67,9 @@ Json::Value doRandom                (RPC::Context&);
 Json::Value doRipplePathFind        (RPC::Context&);
 Json::Value doServerInfo            (RPC::Context&); // for humans
 Json::Value doServerState           (RPC::Context&); // for machines
-Json::Value doSessionClose          (RPC::Context&);
-Json::Value doSessionOpen           (RPC::Context&);
 Json::Value doSign                  (RPC::Context&);
 Json::Value doSignFor               (RPC::Context&);
+Json::Value doCrawlShards           (RPC::Context&);
 Json::Value doStop                  (RPC::Context&);
 Json::Value doSubmit                (RPC::Context&);
 Json::Value doSubmitMultiSigned     (RPC::Context&);
@@ -76,23 +77,12 @@ Json::Value doSubscribe             (RPC::Context&);
 Json::Value doTransactionEntry      (RPC::Context&);
 Json::Value doTx                    (RPC::Context&);
 Json::Value doTxHistory             (RPC::Context&);
-Json::Value doUnlAdd                (RPC::Context&);
-Json::Value doUnlDelete             (RPC::Context&);
-Json::Value doUnlFetch              (RPC::Context&);
 Json::Value doUnlList               (RPC::Context&);
-Json::Value doUnlLoad               (RPC::Context&);
-Json::Value doUnlNetwork            (RPC::Context&);
-Json::Value doUnlReset              (RPC::Context&);
-Json::Value doUnlScore              (RPC::Context&);
 Json::Value doUnsubscribe           (RPC::Context&);
 Json::Value doValidationCreate      (RPC::Context&);
-Json::Value doValidationSeed        (RPC::Context&);
-Json::Value doWalletLock            (RPC::Context&);
 Json::Value doWalletPropose         (RPC::Context&);
-Json::Value doWalletSeed            (RPC::Context&);
-Json::Value doWalletUnlock          (RPC::Context&);
-Json::Value doWalletVerify          (RPC::Context&);
-
+Json::Value doValidators            (RPC::Context&);
+Json::Value doValidatorListSites    (RPC::Context&);
 } // ripple
 
 #endif

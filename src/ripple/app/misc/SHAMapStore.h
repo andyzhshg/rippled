@@ -21,9 +21,7 @@
 #define RIPPLE_APP_MISC_SHAMAPSTORE_H_INCLUDED
 
 #include <ripple/app/ledger/Ledger.h>
-#include <ripple/core/Config.h>
 #include <ripple/nodestore/Manager.h>
-#include <ripple/nodestore/Scheduler.h>
 #include <ripple/protocol/ErrorCodes.h>
 #include <ripple/core/Stoppable.h>
 
@@ -41,6 +39,8 @@ class SHAMapStore
 public:
     struct Setup
     {
+        explicit Setup() = default;
+
         bool standalone = false;
         std::uint32_t deleteInterval = 0;
         bool advisoryDelete = false;
@@ -50,6 +50,7 @@ public:
         std::uint32_t deleteBatch = 100;
         std::uint32_t backOff = 100;
         std::int32_t ageThreshold = 60;
+        Section shardDatabase;
     };
 
     SHAMapStore (Stoppable& parent) : Stoppable ("SHAMapStore", parent) {}
@@ -62,7 +63,12 @@ public:
     virtual std::uint32_t clampFetchDepth (std::uint32_t fetch_depth) const = 0;
 
     virtual std::unique_ptr <NodeStore::Database> makeDatabase (
-            std::string const& name, std::int32_t readThreads) = 0;
+            std::string const& name,
+            std::int32_t readThreads, Stoppable& parent) = 0;
+
+    virtual std::unique_ptr <NodeStore::DatabaseShard> makeDatabaseShard(
+        std::string const& name, std::int32_t readThreads,
+            Stoppable& parent) = 0;
 
     /** Highest ledger that may be deleted. */
     virtual LedgerIndex setCanDelete (LedgerIndex canDelete) = 0;

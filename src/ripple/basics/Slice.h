@@ -43,20 +43,21 @@ namespace ripple {
 class Slice
 {
 private:
-    std::uint8_t const* data_;
+    std::uint8_t const* data_ = nullptr;
     std::size_t size_ = 0;
 
 public:
-    /** Default constructed Slice has length 0. */
-    Slice() = default;
+    using const_iterator = std::uint8_t const*;
 
-    Slice (Slice const&) = default;
-    Slice& operator= (Slice const&) = default;
+    /** Default constructed Slice has length 0. */
+    Slice() noexcept = default;
+
+    Slice (Slice const&) noexcept = default;
+    Slice& operator= (Slice const&) noexcept = default;
 
     /** Create a slice pointing to existing memory. */
-    Slice (void const* data, std::size_t size)
-        : data_ (reinterpret_cast<
-            std::uint8_t const*>(data))
+    Slice (void const* data, std::size_t size) noexcept
+        : data_ (reinterpret_cast<std::uint8_t const*>(data))
         , size_ (size)
     {
     }
@@ -115,6 +116,31 @@ public:
         return temp += n;
     }
     /** @} */
+
+
+    const_iterator
+    begin() const noexcept
+    {
+        return data_;
+    }
+
+    const_iterator
+    cbegin() const noexcept
+    {
+        return data_;
+    }
+
+    const_iterator
+    end() const noexcept
+    {
+        return data_ + size_;
+    }
+
+    const_iterator
+    cend() const noexcept
+    {
+        return data_ + size_;
+    }
 };
 
 //------------------------------------------------------------------------------
@@ -131,9 +157,13 @@ inline
 bool
 operator== (Slice const& lhs, Slice const& rhs) noexcept
 {
-    return lhs.size() == rhs.size() &&
-        std::memcmp(
-            lhs.data(), rhs.data(), lhs.size()) == 0;
+    if (lhs.size() != rhs.size())
+        return false;
+
+    if (lhs.size() == 0)
+        return true;
+
+    return std::memcmp(lhs.data(), rhs.data(), lhs.size()) == 0;
 }
 
 inline
@@ -156,7 +186,7 @@ operator< (Slice const& lhs, Slice const& rhs) noexcept
 template <class Stream>
 Stream& operator<<(Stream& s, Slice const& v)
 {
-    s << strHex(v.data(), v.size());
+    s << strHex(v);
     return s;
 }
 
@@ -188,9 +218,6 @@ makeSlice (std::basic_string<char, Traits, Alloc> const& s)
 {
     return Slice(s.data(), s.size());
 }
-
-std::string
-strHex (Slice const& slice);
 
 } // ripple
 

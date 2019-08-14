@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/ledger/LedgerMaster.h>
 #include <ripple/app/ledger/TransactionMaster.h>
 #include <ripple/app/main/Application.h>
@@ -25,8 +24,9 @@
 #include <ripple/app/misc/Transaction.h>
 #include <ripple/net/RPCErr.h>
 #include <ripple/protocol/ErrorCodes.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/rpc/Context.h>
+#include <ripple/rpc/DeliveredAmount.h>
 #include <ripple/rpc/impl/RPCHelpers.h>
 
 namespace ripple {
@@ -45,7 +45,7 @@ isHexTxID (std::string const& txid)
     auto const ret = std::find_if (txid.begin (), txid.end (),
         [](std::string::value_type c)
         {
-            return !std::isxdigit (c);
+            return !std::isxdigit (static_cast<unsigned char>(c));
         });
 
     return (ret == txid.end ());
@@ -103,7 +103,7 @@ Json::Value doTx (RPC::Context& context)
     if (!txn)
         return rpcError (rpcTXN_NOT_FOUND);
 
-    Json::Value ret = txn->getJson (1, binary);
+    Json::Value ret = txn->getJson (JsonOptions::include_date, binary);
 
     if (txn->getLedger () == 0)
         return ret;
@@ -127,12 +127,12 @@ Json::Value doTx (RPC::Context& context)
             auto rawMeta = lgr->txRead (txn->getID()).second;
             if (rawMeta)
             {
-                auto txMeta = std::make_shared<TxMeta> (txn->getID (),
-                    lgr->seq (), *rawMeta, context.app.journal ("TxMeta"));
+                auto txMeta = std::make_shared<TxMeta>(
+                    txn->getID(), lgr->seq(), *rawMeta);
                 okay = true;
-                auto meta = txMeta->getJson (0);
-                addPaymentDeliveredAmount (meta, context, txn, txMeta);
-                ret[jss::meta] = meta;
+                auto meta = txMeta->getJson (JsonOptions::none);
+                insertDeliveredAmount (meta, context, txn, *txMeta);
+                ret[jss::meta] = std::move(meta);
             }
         }
 

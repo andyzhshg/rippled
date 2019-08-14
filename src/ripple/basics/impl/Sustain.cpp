@@ -17,9 +17,9 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
+#include <ripple/basics/safe_cast.h>
 #include <ripple/basics/Sustain.h>
-#include <ripple/basics/ThreadName.h>
+#include <ripple/beast/core/CurrentThreadName.h>
 #include <boost/format.hpp>
 
 // For Sustain Linux variants
@@ -42,8 +42,8 @@ namespace ripple {
 static auto const sleepBeforeWaiting = 10;
 static auto const sleepBetweenWaits = 1;
 
-static pid_t pManager = static_cast<pid_t> (0);
-static pid_t pChild = static_cast<pid_t> (0);
+static pid_t pManager = safe_cast<pid_t> (0);
+static pid_t pChild = safe_cast<pid_t> (0);
 
 static void pass_signal (int a)
 {
@@ -103,7 +103,7 @@ std::string DoSustain ()
         auto cc = std::to_string (childCount);
         if (pChild == 0)
         {
-            setCallingThreadName ("main");
+            beast::setCurrentThreadName ("rippled: main");
             signal (SIGINT, SIG_DFL);
             signal (SIGHUP, SIG_DFL);
             signal (SIGUSR1, SIG_DFL);
@@ -111,7 +111,7 @@ std::string DoSustain ()
             return "Launching child " + cc;
         }
 
-        setCallingThreadName (("#" + cc).c_str());
+        beast::setCurrentThreadName (("rippled: #" + cc).c_str());
 
         sleep (sleepBeforeWaiting);
 
@@ -130,8 +130,8 @@ std::string DoSustain ()
             while (checkChild (pChild, 0))
                 sleep(sleepBetweenWaits);
 
-            auto pc = std::to_string (pChild);
-            rename ("core", ("core." + pc).c_str ());
+            (void)rename ("core",
+                ("core." + std::to_string(pChild)).c_str());
         }
     }
 }

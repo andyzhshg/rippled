@@ -17,9 +17,8 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/basics/contract.h>
-#include <ripple/beast/unit_test.h>
+#include <ripple/beast/core/PlatformConfig.h>
 #include <ripple/beast/core/SemanticVersion.h>
 #include <ripple/protocol/BuildInfo.h>
 
@@ -27,14 +26,11 @@ namespace ripple {
 
 namespace BuildInfo {
 
+//--------------------------------------------------------------------------
+//  The build version number. You must edit this for each release
+//  and follow the format described at http://semver.org/
 //------------------------------------------------------------------------------
-char const* const versionString =
-
-    //--------------------------------------------------------------------------
-    //  The build version number. You must edit this for each release
-    //  and follow the format described at http://semver.org/
-    //
-        "0.33.0-b8"
+char const* const versionString = "1.3.1"
 
 #if defined(DEBUG) || defined(SANITIZER)
        "+"

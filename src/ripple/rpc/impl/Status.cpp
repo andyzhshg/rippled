@@ -17,11 +17,13 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/rpc/Status.h>
+#include <sstream>
 
 namespace ripple {
 namespace RPC {
+
+constexpr Status::Code Status::OK;
 
 std::string Status::codeString () const
 {
@@ -45,7 +47,9 @@ std::string Status::codeString () const
     if (type_ == Status::Type::error_code_i)
     {
         auto info = get_error_info (toErrorCode ());
-        return info.token +  ": " + info.message;
+        std::ostringstream sStr;
+        sStr << info.token.c_str() << ": " << info.message.c_str();
+        return sStr.str();
     }
 
     assert (false);

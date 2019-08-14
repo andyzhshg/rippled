@@ -1,66 +1,59 @@
 # Set environment variables.
 environment:
-  PYTHON: C:/Python27-x64
 
   # We bundle up protoc.exe and only the parts of boost and openssl we need so
   # that it's a small download. We also use appveyor's free cache, avoiding fees
-  # downloading from S3 each time. 
+  # downloading from S3 each time.
   # TODO: script to create this package.
-  RIPPLED_DEPS_URL: https://ripple.github.io/Downloads/appveyor/rippled_deps15.01.zip
+  RIPPLED_DEPS_PATH: rippled_deps17.04
+  RIPPLED_DEPS_URL: https://ripple.github.io/Downloads/appveyor/%RIPPLED_DEPS_PATH%.zip
 
-  # Other dependencies we just download each time.
-  PIP_URL: https://bootstrap.pypa.io/get-pip.py
-  PYWIN32_URL: https://downloads.sourceforge.net/project/pywin32/pywin32/Build%20220/pywin32-220.win-amd64-py2.7.exe
+  # CMake honors these environment variables, setting the include/lib paths.
+  BOOST_ROOT: C:/%RIPPLED_DEPS_PATH%/boost
+  OPENSSL_ROOT: C:/%RIPPLED_DEPS_PATH%/openssl
+  NIH_CACHE_ROOT: C:/%RIPPLED_DEPS_PATH%/
 
-  # Scons honours these environment variables, setting the include/lib paths.
-  BOOST_ROOT: C:/rippled_deps15.01/boost
-  OPENSSL_ROOT: C:/rippled_deps15.01/openssl
+  # We've had trouble with AppVeyor apparently not having a stack as large
+  # as the *nix CI platforms.  AppVeyor support suggested that we try
+  # GCE VMs.  The following line is supposed to enable that VM type.
+  appveyor_build_worker_cloud: gce
 
-os: Visual Studio 2015
+  matrix:
+  - build: cmake
+    target: msvc.debug
+    buildconfig: Debug
 
-# At the end of each successful build we cache this directory. It must be less
-# than 100MB total compressed.
+os: Visual Studio 2017
+
+# At the end of each successful build we cache this directory.
+# https://www.appveyor.com/docs/build-cache/
+# Resulting archive should not exceed 100 MB.
 cache:
-  - "C:\\rippled_deps15.01"
+  - 'C:\%RIPPLED_DEPS_PATH%'
 
 # This means we'll download a zip of the branch we want, rather than the full
 # history.
 shallow_clone: true
 
 install:
-  # We want easy_install, python and protoc.exe on PATH.
-  - SET PATH=%PYTHON%;%PYTHON%/Scripts;C:/rippled_deps15.01;%PATH%
-
-  # `ps` prefix means the command is executed by powershell.
-  - ps: Start-FileDownload $env:PIP_URL
-  - ps: Start-FileDownload $env:PYWIN32_URL
-
-  # Installing pip will install setuptools/easy_install.
-  - python get-pip.py
-
-  # Pip has some problems installing scons on windows so we use easy install.
-  # - easy_install scons
-  # Workaround
-  - easy_install https://pypi.python.org/packages/source/S/SCons/scons-2.5.0.tar.gz#md5=bda5530a70a41a7831d83c8b191c021e
-
-  # Scons has problems with parallel builds on windows without pywin32.
-  - easy_install pywin32-220.win-amd64-py2.7.exe
-  # (easy_install can do headless installs of .exe wizards)
+  # We want  protoc.exe on PATH.
+  - SET PATH=C:/%RIPPLED_DEPS_PATH%;%PATH%
 
   # Download dependencies if appveyor didn't restore them from the cache.
   # Use 7zip to unzip.
   - ps: |
-        if (-not(Test-Path 'C:/rippled_deps15.01')) {
+        if (-not(Test-Path 'C:/$env:RIPPLED_DEPS_PATH')) {
             echo "Download from $env:RIPPLED_DEPS_URL"
             Start-FileDownload "$env:RIPPLED_DEPS_URL"
-            7z x rippled_deps15.01.zip -oC:\ -y > $null
+            7z x "$($env:RIPPLED_DEPS_PATH).zip" -oC:\ -y > $null
+            if ($LastExitCode -ne 0) { throw "7z failed" }
         }
 
   # Newer DEPS include a versions file.
   # Dump it so we can verify correct behavior.
   - ps: |
-        if (Test-Path 'C:/rippled_deps15.01/versions.txt') {
-          cat 'C:/rippled_deps15.01/versions.txt'
+        if (Test-Path "C:/$env:RIPPLED_DEPS_PATH/versions.txt") {
+          cat "C:/$env:RIPPLED_DEPS_PATH/versions.txt"
         }
 
 # TODO: This is giving me grief
@@ -73,17 +66,30 @@ build_script:
   - '"%VS140COMNTOOLS%../../VC/vcvarsall.bat" x86_amd64'
   # Show which version of the compiler we are using.
   - cl
-  - scons msvc.debug -j%NUMBER_OF_PROCESSORS%
+  - ps: |
+          # Build with cmake
+          cmake --version
+          $cmake_target="$($env:target).ci"
+          "$cmake_target"
+          New-Item -ItemType Directory -Force -Path "build/$cmake_target"
+          Push-Location "build/$cmake_target"
+          cmake -G"Visual Studio 15 2017 Win64" ../..
+          if ($LastExitCode -ne 0) { throw "CMake failed" }
+          cmake --build . --config $env:buildconfig --parallel 3
+          if ($LastExitCode -ne 0) { throw "CMake build failed" }
+          Pop-Location
 
 after_build:
-  # Put our executable in a place where npm test can find it.
-  - ps: cp build/msvc.debug/rippled.exe build
-  - ps: ls build
+  - ps: |
+        $exe="build/$cmake_target/$env:buildconfig/rippled"
+        "Exe is at $exe"
 
 test_script:
-  # Run the unit tests
-  - build\\rippled --unittest
+  - ps: |
+        & {
+          # Run the rippled unit tests
+          & $exe --unittest --unittest-log --unittest-jobs 2
+          # https://connect.microsoft.com/PowerShell/feedback/details/751703/option-to-stop-script-if-command-line-exe-fails
+          if ($LastExitCode -ne 0) { throw "Unit tests failed" }
+        }
 
-  # Run the integration tests
-  - npm install --progress=false
-  - npm test

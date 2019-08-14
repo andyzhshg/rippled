@@ -17,13 +17,12 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/ledger/ReadView.h>
 #include <ripple/ledger/View.h>
 #include <ripple/net/RPCErr.h>
 #include <ripple/protocol/ErrorCodes.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/protocol/jss.h>
 #include <ripple/protocol/PublicKey.h>
 #include <ripple/protocol/STAccount.h>
 #include <ripple/resource/Fees.h>
@@ -40,9 +39,12 @@ void addChannel (Json::Value& jsonLines, SLE const& line)
     jDst[jss::destination_account] = to_string (line[sfDestination]);
     jDst[jss::amount] = line[sfAmount].getText ();
     jDst[jss::balance] = line[sfBalance].getText ();
-    PublicKey const pk (line[sfPublicKey]);
-    jDst[jss::public_key] = toBase58 (TokenType::TOKEN_ACCOUNT_PUBLIC, pk);
-    jDst[jss::public_key_hex] = strHex (pk);
+    if (publicKeyType(line[sfPublicKey]))
+    {
+        PublicKey const pk (line[sfPublicKey]);
+        jDst[jss::public_key] = toBase58 (TokenType::AccountPublic, pk);
+        jDst[jss::public_key_hex] = strHex (pk);
+    }
     jDst[jss::settle_delay] = line[sfSettleDelay];
     if (auto const& v = line[~sfExpiration])
         jDst[jss::expiration] = *v;
@@ -75,9 +77,8 @@ Json::Value doAccountChannels (RPC::Context& context)
     std::string strIdent (params[jss::account].asString ());
     AccountID accountID;
 
-    result = RPC::accountFromString (accountID, strIdent);
-    if (result)
-        return result;
+    if (auto const actResult = RPC::accountFromString (accountID, strIdent))
+        return actResult;
 
     if (! ledger->exists(keylet::account (accountID)))
         return rpcError (rpcACT_NOT_FOUND);
@@ -90,9 +91,8 @@ Json::Value doAccountChannels (RPC::Context& context)
     AccountID raDstAccount;
     if (hasDst)
     {
-        result = RPC::accountFromString (raDstAccount, strDst);
-        if (result)
-            return result;
+        if (auto const actResult = RPC::accountFromString (raDstAccount, strDst))
+            return actResult;
     }
 
     unsigned int limit;
@@ -167,7 +167,7 @@ Json::Value doAccountChannels (RPC::Context& context)
     {
         result[jss::limit] = limit;
 
-        result[jss::marker] = to_string (visitData.items.back()->getIndex());
+        result[jss::marker] = to_string (visitData.items.back()->key());
         visitData.items.pop_back ();
     }
 

@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 
 #include <ripple/basics/contract.h>
 #include <ripple/nodestore/Factory.h>
@@ -25,9 +24,7 @@
 #include <ripple/nodestore/impl/codec.h>
 #include <ripple/nodestore/impl/DecodedBlob.h>
 #include <ripple/nodestore/impl/EncodedBlob.h>
-#include <ripple/beast/nudb.h>
-#include <ripple/beast/nudb/visit.h>
-#include <ripple/beast/hash/xxhasher.h>
+#include <nudb/nudb.hpp>
 #include <boost/filesystem.hpp>
 #include <cassert>
 #include <chrono>
@@ -43,28 +40,21 @@ class NuDBBackend
     : public Backend
 {
 public:
-    enum
-    {
-        // This needs to be tuned for the
-        // distribution of data sizes.
-        arena_alloc_size = 16 * 1024 * 1024,
+    static constexpr std::size_t currentType = 1;
 
-        currentType = 1
-    };
-
-    using api = beast::nudb::api<
-        beast::xxhasher, nodeobject_codec>;
-
-    beast::Journal journal_;
+    beast::Journal j_;
     size_t const keyBytes_;
     std::string const name_;
-    api::store db_;
+    nudb::store db_;
     std::atomic <bool> deletePath_;
     Scheduler& scheduler_;
 
-    NuDBBackend (int keyBytes, Section const& keyValues,
-        Scheduler& scheduler, beast::Journal journal)
-        : journal_ (journal)
+    NuDBBackend (
+        size_t keyBytes,
+        Section const& keyValues,
+        Scheduler& scheduler,
+        beast::Journal journal)
+        : j_(journal)
         , keyBytes_ (keyBytes)
         , name_ (get<std::string>(keyValues, "path"))
         , deletePath_(false)
@@ -73,32 +63,27 @@ public:
         if (name_.empty())
             Throw<std::runtime_error> (
                 "nodestore: Missing path in NuDB backend");
-        auto const folder = boost::filesystem::path (name_);
-        boost::filesystem::create_directories (folder);
-        auto const dp = (folder / "nudb.dat").string();
-        auto const kp = (folder / "nudb.key").string ();
-        auto const lp = (folder / "nudb.log").string ();
-        using beast::nudb::make_salt;
-        api::create (dp, kp, lp,
-            currentType, make_salt(), keyBytes,
-                beast::nudb::block_size(kp),
-            0.50);
-        try
-        {
-            if (! db_.open (dp, kp, lp, arena_alloc_size))
-                Throw<std::runtime_error> ("nodestore: open failed");
-            if (db_.appnum() != currentType)
-                Throw<std::runtime_error> ("nodestore: unknown appnum");
-        }
-        catch (std::exception const& e)
-        {
-            // log and terminate?
-            std::cerr << e.what();
-            std::terminate();
-        }
     }
 
-    ~NuDBBackend ()
+    NuDBBackend (
+        size_t keyBytes,
+        Section const& keyValues,
+        Scheduler& scheduler,
+        nudb::context& context,
+        beast::Journal journal)
+        : j_(journal)
+        , keyBytes_ (keyBytes)
+        , name_ (get<std::string>(keyValues, "path"))
+        , db_ (context)
+        , deletePath_(false)
+        , scheduler_ (scheduler)
+    {
+        if (name_.empty())
+            Throw<std::runtime_error> (
+                "nodestore: Missing path in NuDB backend");
+    }
+
+    ~NuDBBackend () override
     {
         close();
     }
@@ -110,11 +95,49 @@ public:
     }
 
     void
+    open(bool createIfMissing) override
+    {
+        using namespace boost::filesystem;
+        if (db_.is_open())
+        {
+            assert(false);
+            JLOG(j_.error()) <<
+                "database is already open";
+            return;
+        }
+        auto const folder = path(name_);
+        auto const dp = (folder / "nudb.dat").string();
+        auto const kp = (folder / "nudb.key").string();
+        auto const lp = (folder / "nudb.log").string();
+        nudb::error_code ec;
+        if (createIfMissing)
+        {
+            create_directories(folder);
+            nudb::create<nudb::xxhasher>(dp, kp, lp,
+                currentType, nudb::make_salt(), keyBytes_,
+                    nudb::block_size(kp), 0.50, ec);
+            if(ec == nudb::errc::file_exists)
+                ec = {};
+            if(ec)
+                Throw<nudb::system_error>(ec);
+        }
+        db_.open (dp, kp, lp, ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
+        if (db_.appnum() != currentType)
+            Throw<std::runtime_error>(
+                "nodestore: unknown appnum");
+    }
+
+    void
     close() override
     {
         if (db_.is_open())
         {
-            db_.close();
+            nudb::error_code ec;
+            db_.close(ec);
+            if(ec)
+                Throw<nudb::system_error>(ec);
             if (deletePath_)
             {
                 boost::filesystem::remove_all (name_);
@@ -127,10 +150,14 @@ public:
     {
         Status status;
         pno->reset();
-        if (! db_.fetch (key,
+        nudb::error_code ec;
+        db_.fetch (key,
             [key, pno, &status](void const* data, std::size_t size)
             {
-                DecodedBlob decoded (key, data, size);
+                nudb::detail::buffer bf;
+                auto const result =
+                    nodeobject_decompress(data, size, bf);
+                DecodedBlob decoded (key, result.first, result.second);
                 if (! decoded.wasOk ())
                 {
                     status = dataCorrupt;
@@ -138,10 +165,11 @@ public:
                 }
                 *pno = decoded.createObject();
                 status = ok;
-            }))
-        {
+            }, ec);
+        if(ec == nudb::error::key_not_found)
             return notFound;
-        }
+        if(ec)
+            Throw<nudb::system_error>(ec);
         return status;
     }
 
@@ -163,8 +191,13 @@ public:
     {
         EncodedBlob e;
         e.prepare (no);
-        db_.insert (e.getKey(),
-            e.getData(), e.getSize());
+        nudb::error_code ec;
+        nudb::detail::buffer bf;
+        auto const result = nodeobject_compress(
+            e.getData(), e.getSize(), bf);
+        db_.insert (e.getKey(), result.first, result.second, ec);
+        if(ec && ec != nudb::error::key_exists)
+            Throw<nudb::system_error>(ec);
     }
 
     void
@@ -185,7 +218,6 @@ public:
     storeBatch (Batch const& batch) override
     {
         BatchWriteReport report;
-        EncodedBlob encoded;
         report.writeCount = batch.size();
         auto const start =
             std::chrono::steady_clock::now();
@@ -204,20 +236,32 @@ public:
         auto const kp = db_.key_path();
         auto const lp = db_.log_path();
         //auto const appnum = db_.appnum();
-        db_.close();
-        api::visit (dp,
+        nudb::error_code ec;
+        db_.close(ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
+        nudb::visit(dp,
             [&](
                 void const* key, std::size_t key_bytes,
-                void const* data, std::size_t size)
+                void const* data, std::size_t size,
+                nudb::error_code&)
             {
-                DecodedBlob decoded (key, data, size);
+                nudb::detail::buffer bf;
+                auto const result =
+                    nodeobject_decompress(data, size, bf);
+                DecodedBlob decoded (key, result.first, result.second);
                 if (! decoded.wasOk ())
-                    return false;
+                {
+                    ec = make_error_code(nudb::error::missing_value);
+                    return;
+                }
                 f (decoded.createObject());
-                return true;
-            });
-        db_.open (dp, kp, lp,
-            arena_alloc_size);
+            }, nudb::no_progress{}, ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
+        db_.open(dp, kp, lp, ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
     }
 
     int
@@ -238,13 +282,20 @@ public:
         auto const dp = db_.dat_path();
         auto const kp = db_.key_path();
         auto const lp = db_.log_path();
-        db_.close();
-        api::verify (dp, kp);
-        db_.open (dp, kp, lp,
-            arena_alloc_size);
+        nudb::error_code ec;
+        db_.close(ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
+        nudb::verify_info vi;
+        nudb::verify<nudb::xxhasher>(
+            vi, dp, kp, 0, nudb::no_progress{}, ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
+        db_.open (dp, kp, lp, ec);
+        if(ec)
+            Throw<nudb::system_error>(ec);
     }
 
-    /** Returns the number of file handles the backend expects to need */
     int
     fdlimit() const override
     {
@@ -262,13 +313,13 @@ public:
         Manager::instance().insert(*this);
     }
 
-    ~NuDBFactory()
+    ~NuDBFactory() override
     {
         Manager::instance().erase(*this);
     }
 
     std::string
-    getName() const
+    getName() const override
     {
         return "NuDB";
     }
@@ -278,10 +329,22 @@ public:
         size_t keyBytes,
         Section const& keyValues,
         Scheduler& scheduler,
-        beast::Journal journal)
+        beast::Journal journal) override
     {
         return std::make_unique <NuDBBackend> (
             keyBytes, keyValues, scheduler, journal);
+    }
+
+    std::unique_ptr <Backend>
+    createInstance (
+        size_t keyBytes,
+        Section const& keyValues,
+        Scheduler& scheduler,
+        nudb::context& context,
+        beast::Journal journal) override
+    {
+        return std::make_unique <NuDBBackend> (
+            keyBytes, keyValues, scheduler, context, journal);
     }
 };
 

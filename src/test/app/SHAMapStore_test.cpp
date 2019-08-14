@@ -17,14 +17,14 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/app/misc/SHAMapStore.h>
 #include <ripple/core/ConfigSections.h>
 #include <ripple/core/DatabaseCon.h>
 #include <ripple/core/SociDB.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/test/jtx.h>
+#include <ripple/protocol/jss.h>
+#include <test/jtx.h>
+#include <test/jtx/envconfig.h>
 
 namespace ripple {
 namespace test {
@@ -34,26 +34,24 @@ class SHAMapStore_test : public beast::unit_test::suite
     static auto const deleteInterval = 8;
 
     static
-    std::unique_ptr<Config>
-    makeConfig()
+    auto
+    onlineDelete(std::unique_ptr<Config> cfg)
     {
-        auto p = std::make_unique<Config>();
-        setupConfigForUnitTests(*p);
-        p->LEDGER_HISTORY = deleteInterval;
-        auto& section = p->section(ConfigSection::nodeDatabase());
+        cfg->LEDGER_HISTORY = deleteInterval;
+        auto& section = cfg->section(ConfigSection::nodeDatabase());
         section.set("online_delete", to_string(deleteInterval));
         //section.set("age_threshold", "60");
-        return p;
+        return cfg;
     }
 
     static
-    std::unique_ptr<Config>
-    makeConfigAdvisory()
+    auto
+    advisoryDelete(std::unique_ptr<Config> cfg)
     {
-        auto p = makeConfig();
-        auto& section = p->section(ConfigSection::nodeDatabase());
-        section.set("advisory_delete", "1");
-        return p;
+        cfg = onlineDelete(std::move(cfg));
+        cfg->section(ConfigSection::nodeDatabase())
+            .set("advisory_delete", "1");
+        return cfg;
     }
 
     bool goodLedger(jtx::Env& env, Json::Value const& json,
@@ -211,7 +209,7 @@ public:
         testcase("clearPrior");
         using namespace jtx;
 
-        Env env(*this, makeConfig());
+        Env env(*this, envconfig(onlineDelete));
 
         auto& store = env.app().getSHAMapStore();
         env.fund(XRP(10000), noripple("alice"));
@@ -397,7 +395,7 @@ public:
         using namespace jtx;
         using namespace std::chrono_literals;
 
-        Env env(*this, makeConfig());
+        Env env(*this, envconfig(onlineDelete));
         auto& store = env.app().getSHAMapStore();
 
         auto ledgerSeq = waitForReady(env);
@@ -466,7 +464,7 @@ public:
         using namespace std::chrono_literals;
 
         // Same config with advisory_delete enabled
-        Env env(*this, makeConfigAdvisory());
+        Env env(*this, envconfig(advisoryDelete));
         auto& store = env.app().getSHAMapStore();
 
         auto ledgerSeq = waitForReady(env);
@@ -625,7 +623,7 @@ public:
         lastRotated = ledgerSeq - 1;
     }
 
-    void run()
+    void run() override
     {
         testClear();
         testAutomatic();

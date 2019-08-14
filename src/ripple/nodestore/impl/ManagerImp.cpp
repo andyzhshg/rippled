@@ -17,15 +17,8 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/basics/contract.h>
 #include <ripple/nodestore/impl/ManagerImp.h>
-#include <ripple/nodestore/impl/DatabaseImp.h>
-#include <ripple/nodestore/impl/DatabaseRotatingImp.h>
-#include <ripple/basics/StringUtilities.h>
-#include <beast/core/detail/ci_char_traits.hpp>
-#include <memory>
-#include <stdexcept>
+#include <ripple/nodestore/impl/DatabaseNodeImp.h>
 
 namespace ripple {
 namespace NodeStore {
@@ -46,97 +39,44 @@ ManagerImp::missing_backend()
         );
 }
 
-ManagerImp::ManagerImp()
-{
-}
-
-ManagerImp::~ManagerImp()
-{
-}
-
 std::unique_ptr <Backend>
 ManagerImp::make_Backend (
     Section const& parameters,
     Scheduler& scheduler,
     beast::Journal journal)
 {
-    std::unique_ptr <Backend> backend;
+    std::string const type {get<std::string>(parameters, "type")};
+    if (type.empty())
+        missing_backend();
 
-    std::string const type (get<std::string>(parameters, "type"));
+    auto factory {find(type)};
+    if(!factory)
+        missing_backend();
 
-    if (! type.empty ())
-    {
-        Factory* const factory (find (type));
-
-        if (factory != nullptr)
-        {
-            backend = factory->createInstance (
-                NodeObject::keyBytes, parameters, scheduler, journal);
-        }
-        else
-        {
-            missing_backend ();
-        }
-    }
-    else
-    {
-        missing_backend ();
-    }
-
-    return backend;
+    return factory->createInstance(
+        NodeObject::keyBytes, parameters, scheduler, journal);
 }
 
 std::unique_ptr <Database>
 ManagerImp::make_Database (
     std::string const& name,
     Scheduler& scheduler,
-    beast::Journal journal,
     int readThreads,
-    Section const& backendParameters)
+    Stoppable& parent,
+    Section const& config,
+    beast::Journal journal)
 {
-    return std::make_unique <DatabaseImp> (
+    auto backend {make_Backend(config, scheduler, journal)};
+    backend->open();
+    return std::make_unique <DatabaseNodeImp>(
         name,
         scheduler,
         readThreads,
-        make_Backend (
-            backendParameters,
-            scheduler,
-            journal),
+        parent,
+        std::move(backend),
+        config,
         journal);
 }
-
-std::unique_ptr <DatabaseRotating>
-ManagerImp::make_DatabaseRotating (
-        std::string const& name,
-        Scheduler& scheduler,
-        std::int32_t readThreads,
-        std::shared_ptr <Backend> writableBackend,
-        std::shared_ptr <Backend> archiveBackend,
-        beast::Journal journal)
-{
-    return std::make_unique <DatabaseRotatingImp> (
-        name,
-        scheduler,
-        readThreads,
-        writableBackend,
-        archiveBackend,
-        journal);
-}
-
-Factory*
-ManagerImp::find (std::string const& name)
-{
-    std::lock_guard<std::mutex> _(mutex_);
-    auto const iter = std::find_if(list_.begin(), list_.end(),
-        [&name](Factory* other)
-        {
-            return beast::detail::ci_equal(name, other->getName());
-        } );
-    if (iter == list_.end())
-        return nullptr;
-    return *iter;
-}
-
 
 void
 ManagerImp::insert (Factory& factory)
@@ -153,6 +93,20 @@ ManagerImp::erase (Factory& factory)
         [&factory](Factory* other) { return other == &factory; });
     assert(iter != list_.end());
     list_.erase(iter);
+}
+
+Factory*
+ManagerImp::find (std::string const& name)
+{
+    std::lock_guard<std::mutex> _(mutex_);
+    auto const iter = std::find_if(list_.begin(), list_.end(),
+        [&name](Factory* other)
+        {
+            return boost::beast::detail::iequals(name, other->getName());
+        } );
+    if (iter == list_.end())
+        return nullptr;
+    return *iter;
 }
 
 //------------------------------------------------------------------------------

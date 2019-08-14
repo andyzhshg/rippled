@@ -15,10 +15,10 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/test/WSClient.h>
-#include <ripple/test/jtx.h>
+#include <ripple/protocol/Feature.h>
+#include <ripple/protocol/jss.h>
+#include <test/jtx/WSClient.h>
+#include <test/jtx.h>
 #include <ripple/beast/unit_test.h>
 
 namespace ripple {
@@ -29,11 +29,11 @@ class GatewayBalances_test : public beast::unit_test::suite
 public:
 
     void
-    testGWB()
+    testGWB(FeatureBitset features)
     {
         using namespace std::chrono_literals;
         using namespace jtx;
-        Env env(*this);
+        Env env(*this, features);
 
         // Gateway account and assets
         Account const alice {"alice"};
@@ -86,6 +86,12 @@ public:
 
         auto jv = wsc->invoke("gateway_balances", qry);
         expect(jv[jss::status] == "success");
+        if (wsc->version() == 2)
+        {
+            expect(jv.isMember(jss::jsonrpc) && jv[jss::jsonrpc] == "2.0");
+            expect(jv.isMember(jss::ripplerpc) && jv[jss::ripplerpc] == "2.0");
+            expect(jv.isMember(jss::id) && jv[jss::id] == 5);
+        }
 
         auto const& result = jv[jss::result];
         expect(result[jss::account] == alice.human());
@@ -146,7 +152,11 @@ public:
     void
     run() override
     {
-        testGWB();
+        using namespace jtx;
+        auto const sa = supported_amendments();
+        testGWB(sa - featureFlow - fix1373 - featureFlowCross);
+        testGWB(sa                         - featureFlowCross);
+        testGWB(sa);
     }
 };
 

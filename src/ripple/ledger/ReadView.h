@@ -50,7 +50,7 @@ struct Fees
     std::uint32_t reserve = 0;      // Reserve base (drops)
     std::uint32_t increment = 0;    // Reserve increment (drops)
 
-    Fees() = default;
+    explicit Fees() = default;
     Fees (Fees const&) = default;
     Fees& operator= (Fees const&) = default;
 
@@ -71,6 +71,8 @@ struct Fees
 /** Information about the notional ledger backing the view. */
 struct LedgerInfo
 {
+    explicit LedgerInfo() = default;
+
     //
     // For all ledgers
     //
@@ -83,12 +85,12 @@ struct LedgerInfo
     //
 
     // Closed means "tx set already determined"
-    uint256 hash = zero;
-    uint256 txHash = zero;
-    uint256 accountHash = zero;
-    uint256 parentHash = zero;
+    uint256 hash = beast::zero;
+    uint256 txHash = beast::zero;
+    uint256 accountHash = beast::zero;
+    uint256 parentHash = beast::zero;
 
-    XRPAmount drops = zero;
+    XRPAmount drops = beast::zero;
 
     // If validated is false, it means "not yet validated."
     // Once validated is true, it will never be set false at a later time.
@@ -125,26 +127,27 @@ public:
     Rules (Rules const&) = default;
     Rules& operator= (Rules const&) = default;
 
+    Rules() = delete;
+
     /** Construct an empty rule set.
 
         These are the rules reflected by
         the genesis ledger.
     */
-    Rules() = default;
+    explicit Rules(std::unordered_set<uint256, beast::uhash<>> const& presets);
 
     /** Construct rules from a ledger.
 
         The ledger contents are analyzed for rules
         and amendments and extracted to the object.
     */
-    explicit
-    Rules (DigestAwareReadView const& ledger);
+    explicit Rules(
+        DigestAwareReadView const& ledger,
+            std::unordered_set<uint256, beast::uhash<>> const& presets);
 
     /** Returns `true` if a feature is enabled. */
     bool
-    enabled (uint256 const& id,
-        std::unordered_set<uint256,
-            beast::uhash<>> const& presets) const;
+    enabled (uint256 const& id) const;
 
     /** Returns `true` if these rules don't match the ledger. */
     bool
@@ -416,12 +419,21 @@ public:
 
 // ledger close flags
 static
-std::uint32_t const sLCF_NoConsensusTime = 1;
+std::uint32_t const sLCF_NoConsensusTime = 0x01;
+
+static
+std::uint32_t const sLCF_SHAMapV2 = 0x02;
 
 inline
 bool getCloseAgree (LedgerInfo const& info)
 {
     return (info.closeFlags & sLCF_NoConsensusTime) == 0;
+}
+
+inline
+bool getSHAMapV2 (LedgerInfo const& info)
+{
+    return (info.closeFlags & sLCF_SHAMapV2) != 0;
 }
 
 void addRaw (LedgerInfo const&, Serializer&);

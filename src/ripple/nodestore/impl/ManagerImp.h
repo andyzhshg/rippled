@@ -21,8 +21,6 @@
 #define RIPPLE_NODESTORE_MANAGERIMP_H_INCLUDED
 
 #include <ripple/nodestore/Manager.h>
-#include <mutex>
-#include <vector>
 
 namespace ripple {
 namespace NodeStore {
@@ -42,12 +40,12 @@ public:
     void
     missing_backend();
 
-    ManagerImp();
+    ManagerImp() = default;
 
-    ~ManagerImp();
+    ~ManagerImp() = default;
 
     Factory*
-    find (std::string const& name);
+    find (std::string const& name) override;
 
     void
     insert (Factory& factory) override;
@@ -65,17 +63,9 @@ public:
     make_Database (
         std::string const& name,
         Scheduler& scheduler,
-        beast::Journal journal,
         int readThreads,
-        Section const& backendParameters) override;
-
-    std::unique_ptr <DatabaseRotating>
-    make_DatabaseRotating (
-        std::string const& name,
-        Scheduler& scheduler,
-        std::int32_t readThreads,
-        std::shared_ptr <Backend> writableBackend,
-        std::shared_ptr <Backend> archiveBackend,
+        Stoppable& parent,
+        Section const& config,
         beast::Journal journal) override;
 };
 

@@ -41,6 +41,8 @@ protected:
 template<>
 class TOfferBase<STAmount, STAmount>
 {
+public:
+    explicit TOfferBase() = default;
 };
 
 
@@ -95,9 +97,9 @@ public:
     bool
     fully_consumed () const
     {
-        if (m_amounts.in <= zero)
+        if (m_amounts.in <= beast::zero)
             return true;
-        if (m_amounts.out <= zero)
+        if (m_amounts.out <= beast::zero)
             return true;
         return false;
     }
@@ -120,7 +122,12 @@ public:
 
     std::string id () const
     {
-        return to_string (m_entry->getIndex());
+        return to_string (m_entry->key());
+    }
+
+    uint256 key () const
+    {
+        return m_entry->key();
     }
 
     Issue issueIn () const;

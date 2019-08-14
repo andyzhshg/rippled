@@ -27,6 +27,7 @@
 #include <ripple/protocol/Seed.h>
 #include <ripple/protocol/tokens.h>
 #include <array>
+#include <string>
 
 namespace ripple {
 
@@ -37,12 +38,15 @@ private:
     std::uint8_t buf_[32];
 
 public:
+    using const_iterator = std::uint8_t const*;
+
     SecretKey() = default;
     SecretKey (SecretKey const&) = default;
     SecretKey& operator= (SecretKey const&) = default;
 
     ~SecretKey();
 
+    SecretKey (std::array<std::uint8_t, 32> const& data);
     SecretKey (Slice const& slice);
 
     std::uint8_t const*
@@ -56,31 +60,57 @@ public:
     {
         return sizeof(buf_);
     }
-};
 
-//------------------------------------------------------------------------------
+    /** Convert the secret key to a hexadecimal string.
 
-/** Produces a sequence of secp256k1 key pairs. */
-class Generator
-{
-private:
-    Blob gen_; // VFALCO compile time size?
-
-public:
-    explicit
-    Generator (Seed const& seed);
-
-    /** Generate the nth key pair.
-
-        The seed is required to produce the private key.
+        @note The operator<< function is deliberately omitted
+        to avoid accidental exposure of secret key material.
     */
-    std::pair<PublicKey, SecretKey>
-    operator()(Seed const& seed, std::size_t ordinal) const;
+    std::string
+    to_string() const;
 
-    /** Generate the nth public key. */
-    PublicKey
-    operator()(std::size_t ordinal) const;
+    const_iterator
+    begin() const noexcept
+    {
+        return buf_;
+    }
+
+    const_iterator
+    cbegin() const noexcept
+    {
+        return buf_;
+    }
+
+    const_iterator
+    end() const noexcept
+    {
+        return buf_ + sizeof(buf_);
+    }
+
+    const_iterator
+    cend() const noexcept
+    {
+        return buf_ + sizeof(buf_);
+    }
 };
+
+inline
+bool
+operator== (SecretKey const& lhs,
+    SecretKey const& rhs)
+{
+    return lhs.size() == rhs.size() &&
+        std::memcmp(lhs.data(),
+            rhs.data(), rhs.size()) == 0;
+}
+
+inline
+bool
+operator!= (SecretKey const& lhs,
+    SecretKey const& rhs)
+{
+    return ! (lhs == rhs);
+}
 
 //------------------------------------------------------------------------------
 

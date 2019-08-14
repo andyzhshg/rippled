@@ -17,7 +17,6 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/net/RPCSub.h>
 #include <ripple/basics/contract.h>
 #include <ripple/basics/Log.h>
@@ -47,19 +46,20 @@ public:
         , j_ (logs.journal ("RPCSub"))
         , logs_ (logs)
     {
-        std::string strScheme;
+        parsedURL pUrl;
 
-        if (!parseUrl (strUrl, strScheme, mIp, mPort, mPath))
+        if (!parseUrl (pUrl, strUrl))
             Throw<std::runtime_error> ("Failed to parse url.");
-        else if (strScheme == "https")
+        else if (pUrl.scheme == "https")
             mSSL = true;
-        else if (strScheme != "http")
+        else if (pUrl.scheme != "http")
             Throw<std::runtime_error> ("Only http and https is supported.");
 
         mSeq = 1;
 
-        if (mPort < 0)
-            mPort   = mSSL ? 443 : 80;
+        mIp = pUrl.domain;
+        mPort = (! pUrl.port) ? (mSSL ? 443 : 80) : *pUrl.port;
+        mPath = pUrl.path;
 
         JLOG (j_.info()) <<
             "RPCCall::fromNetwork sub: ip=" << mIp <<
@@ -68,11 +68,9 @@ public:
             " path='" << mPath << "'";
     }
 
-    ~RPCSubImp ()
-    {
-    }
+    ~RPCSubImp() = default;
 
-    void send (Json::Value const& jvObj, bool broadcast)
+    void send (Json::Value const& jvObj, bool broadcast) override
     {
         ScopedLockType sl (mLock);
 
@@ -92,25 +90,23 @@ public:
         if (!mSending)
         {
             // Start a sending thread.
-            mSending    = true;
-
             JLOG (j_.info()) << "RPCCall::fromNetwork start";
 
-            m_jobQueue.addJob (
+            mSending = m_jobQueue.addJob (
                 jtCLIENT, "RPCSub::sendThread", [this] (Job&) {
                     sendThread();
                 });
         }
     }
 
-    void setUsername (std::string const& strUsername)
+    void setUsername (std::string const& strUsername) override
     {
         ScopedLockType sl (mLock);
 
         mUsername = strUsername;
     }
 
-    void setPassword (std::string const& strPassword)
+    void setPassword (std::string const& strPassword) override
     {
         ScopedLockType sl (mLock);
 
@@ -186,7 +182,7 @@ private:
 
     std::string             mUrl;
     std::string             mIp;
-    int                     mPort;
+    std::uint16_t           mPort;
     bool                    mSSL;
     std::string             mUsername;
     std::string             mPassword;

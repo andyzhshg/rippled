@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013-2016 Vinnie Falco (vinnie dot falco at gmail dot com)
+// Copyright (c) 2013-2017 Vinnie Falco (vinnie dot falco at gmail dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,7 +10,7 @@
 
 #include <beast/unit_test/suite_info.hpp>
 #include <beast/unit_test/detail/const_container.hpp>
-#include <cassert>
+#include <boost/assert.hpp>
 #include <typeindex>
 #include <set>
 #include <unordered_set>
@@ -33,41 +33,43 @@ public:
 
         The suite must not already exist.
     */
-    template <class Suite>
+    template<class Suite>
     void
     insert(
         char const* name,
         char const* module,
         char const* library,
-        bool manual);
+        bool manual,
+        int priority);
 };
 
 //------------------------------------------------------------------------------
 
-template <class Suite>
+template<class Suite>
 void
 suite_list::insert(
     char const* name,
     char const* module,
     char const* library,
-    bool manual)
+    bool manual,
+    int priority)
 {
 #ifndef NDEBUG
     {
         std::string s;
         s = std::string(library) + "." + module + "." + name;
-        auto const result (names_.insert(s));
-        assert (result.second); // Duplicate name
+        auto const result(names_.insert(s));
+        BOOST_ASSERT(result.second); // Duplicate name
     }
 
     {
-        auto const result (classes_.insert (
-            std::type_index (typeid(Suite))));
-        assert (result.second); // Duplicate type
+        auto const result(classes_.insert(
+            std::type_index(typeid(Suite))));
+        BOOST_ASSERT(result.second); // Duplicate type
     }
 #endif
     cont().emplace(make_suite_info<Suite>(
-        name, module, library, manual));
+        name, module, library, manual, priority));
 }
 
 } // unit_test

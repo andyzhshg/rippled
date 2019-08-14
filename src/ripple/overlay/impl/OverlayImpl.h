@@ -23,13 +23,13 @@
 #include <ripple/app/main/Application.h>
 #include <ripple/core/Job.h>
 #include <ripple/overlay/Overlay.h>
-#include <ripple/overlay/impl/Manifest.h>
 #include <ripple/overlay/impl/TrafficCount.h>
 #include <ripple/server/Handoff.h>
 #include <ripple/rpc/ServerHandler.h>
 #include <ripple/basics/Resolver.h>
 #include <ripple/basics/chrono.h>
 #include <ripple/basics/UnorderedContainers.h>
+#include <ripple/overlay/impl/TMHello.h>
 #include <ripple/peerfinder/PeerfinderManager.h>
 #include <ripple/resource/ResourceManager.h>
 #include <boost/asio/ip/tcp.hpp>
@@ -41,6 +41,7 @@
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -50,10 +51,7 @@ namespace ripple {
 class PeerImp;
 class BasicConfig;
 
-enum
-{
-    maxTTL = 2
-};
+constexpr std::uint32_t maxTTL = 2;
 
 class OverlayImpl : public Overlay
 {
@@ -118,8 +116,17 @@ private:
     hash_map<Peer::id_t, std::weak_ptr<PeerImp>> ids_;
     Resolver& m_resolver;
     std::atomic <Peer::id_t> next_id_;
-    ManifestCache manifestCache_;
     int timer_count_;
+    std::atomic <uint64_t> jqTransOverflow_ {0};
+    std::atomic <uint64_t> peerDisconnects_ {0};
+    std::atomic <uint64_t> peerDisconnectsCharges_ {0};
+
+    // Last time we crawled peers for shard info. 'cs' = crawl shards
+    std::atomic<std::chrono::seconds> csLast_{std::chrono::seconds{0}};
+    std::mutex csMutex_;
+    std::condition_variable csCV_;
+    // Peer IDs expecting to receive a last link notification
+    std::set<std::uint32_t> csIDs_;
 
     //--------------------------------------------------------------------------
 
@@ -152,12 +159,6 @@ public:
         return serverHandler_;
     }
 
-    ManifestCache const&
-    manifestCache() const
-    {
-        return manifestCache_;
-    }
-
     Setup const&
     setup() const
     {
@@ -168,6 +169,18 @@ public:
     onHandoff (std::unique_ptr <beast::asio::ssl_bundle>&& bundle,
         http_request_type&& request,
             endpoint_type remote_endpoint) override;
+
+    void
+    connect(beast::IP::Endpoint const& remote_endpoint) override;
+
+    int
+    limit() override;
+
+    std::size_t
+    size() override;
+
+    Json::Value
+    json() override;
 
     PeerSequence
     getActivePeers() override;
@@ -180,6 +193,9 @@ public:
 
     std::shared_ptr<Peer>
     findPeerByShortID (Peer::id_t const& id) override;
+
+    std::shared_ptr<Peer>
+    findPeerByPublicKey (PublicKey const& pubKey) override;
 
     void
     send (protocol::TMProposeSet& m) override;
@@ -194,15 +210,6 @@ public:
     void
     relay (protocol::TMValidation& m,
         uint256 const& uid) override;
-
-    virtual
-    void
-    setupValidatorKeyManifests (BasicConfig const& config,
-                                DatabaseCon& db) override;
-
-    virtual
-    void
-    saveValidatorKeyManifests (DatabaseCon& db) const override;
 
     //--------------------------------------------------------------------------
     //
@@ -234,11 +241,22 @@ public:
     void
     for_each (UnaryFunc&& f)
     {
-        std::lock_guard <decltype(mutex_)> lock (mutex_);
-        for (auto const& e : ids_)
+        std::vector<std::weak_ptr<PeerImp>> wp;
         {
-            if (auto sp = e.second.lock())
-                f(std::move(sp));
+            std::lock_guard<decltype(mutex_)> lock(mutex_);
+
+            // Iterate over a copy of the peer list because peer
+            // destruction can invalidate iterators.
+            wp.reserve(ids_.size());
+
+            for (auto& x : ids_)
+                wp.push_back(x.second);
+        }
+
+        for (auto& w : wp)
+        {
+            if (auto p = w.lock())
+                f(std::move(p));
         }
     }
 
@@ -256,9 +274,47 @@ public:
     bool
     isPeerUpgrade (http_request_type const& request);
 
+    template<class Body>
     static
     bool
-    isPeerUpgrade (http_response_type const& response);
+    isPeerUpgrade (boost::beast::http::response<Body> const& response)
+    {
+        if (! is_upgrade(response))
+            return false;
+        if(response.result() != boost::beast::http::status::switching_protocols)
+            return false;
+        auto const versions = parse_ProtocolVersions(
+            response["Upgrade"]);
+        if (versions.size() == 0)
+            return false;
+        return true;
+    }
+
+    template<class Fields>
+    static
+    bool
+    is_upgrade(boost::beast::http::header<true, Fields> const& req)
+    {
+        if(req.version() < 11)
+            return false;
+        if(req.method() != boost::beast::http::verb::get)
+            return false;
+        if(! boost::beast::http::token_list{req["Connection"]}.exists("upgrade"))
+            return false;
+        return true;
+    }
+
+    template<class Fields>
+    static
+    bool
+    is_upgrade(boost::beast::http::header<false, Fields> const& req)
+    {
+        if(req.version() < 11)
+            return false;
+        if(! boost::beast::http::token_list{req["Connection"]}.exists("upgrade"))
+            return false;
+        return true;
+    }
 
     static
     std::string
@@ -269,6 +325,53 @@ public:
         TrafficCount::category cat,
         bool isInbound,
         int bytes);
+
+    void
+    incJqTransOverflow() override
+    {
+        ++jqTransOverflow_;
+    }
+
+    std::uint64_t
+    getJqTransOverflow() const override
+    {
+        return jqTransOverflow_;
+    }
+
+    void
+    incPeerDisconnect() override
+    {
+        ++peerDisconnects_;
+    }
+
+    std::uint64_t
+    getPeerDisconnect() const override
+    {
+        return peerDisconnects_;
+    }
+
+    void
+    incPeerDisconnectCharges() override
+    {
+        ++peerDisconnectsCharges_;
+    }
+
+    std::uint64_t
+    getPeerDisconnectCharges() const override
+    {
+        return peerDisconnectsCharges_;
+    }
+
+    Json::Value
+    crawlShards(bool pubKey, std::uint32_t hops) override;
+
+
+    /** Called when the last link from a peer chain is received.
+
+        @param id peer id that received the shard info.
+    */
+    void
+    lastLink(std::uint32_t id);
 
 private:
     std::shared_ptr<Writer>
@@ -284,24 +387,33 @@ private:
     processRequest (http_request_type const& req,
         Handoff& handoff);
 
-    void
-    connect (beast::IP::Endpoint const& remote_endpoint) override;
-
-    /*  The number of active peers on the network
-        Active peers are only those peers that have completed the handshake
-        and are running the Ripple protocol.
+    /** Returns information about peers on the overlay network.
+        Reported through the /crawl API
+        Controlled through the config section [crawl] overlay=[0|1]
     */
-    std::size_t
-    size() override;
-
-    int
-    limit () override;
-
     Json::Value
-    crawl() override;
+    getOverlayInfo();
 
+    /** Returns information about the local server.
+        Reported through the /crawl API
+        Controlled through the config section [crawl] server=[0|1]
+    */
     Json::Value
-    json() override;
+    getServerInfo();
+
+    /** Returns information about the local server's performance counters.
+        Reported through the /crawl API
+        Controlled through the config section [crawl] counts=[0|1]
+    */
+    Json::Value
+    getServerCounts();
+
+    /** Returns information about the local server's UNL.
+        Reported through the /crawl API
+        Controlled through the config section [crawl] unl=[0|1]
+    */
+    Json::Value
+    getUnlInfo();
 
     //--------------------------------------------------------------------------
 

@@ -161,6 +161,7 @@ struct FlowDebugInfo
                 auto const end = FlowDebugInfo::clock::now ();
                 info->timePoints[tag].second = end;
             }
+            Stopper(Stopper&&) = default;
         };
         return Stopper (std::move (name), *this);
     }
@@ -229,21 +230,21 @@ struct FlowDebugInfo
                 }
                 ostr << ']';
             };
-            auto writeXrpAmtList = [&ostr, &write_list](
+            auto writeXrpAmtList = [&write_list](
                 std::vector<EitherAmount> const& amts, char delim=';') {
                 auto get_val = [](EitherAmount const& a) -> std::string {
                     return ripple::to_string (a.xrp);
                 };
                 write_list (amts, get_val, delim);
             };
-            auto writeIouAmtList = [&ostr, &write_list](
+            auto writeIouAmtList = [&write_list](
                 std::vector<EitherAmount> const& amts, char delim=';') {
                 auto get_val = [](EitherAmount const& a) -> std::string {
                     return ripple::to_string (a.iou);
                 };
                 write_list (amts, get_val, delim);
             };
-            auto writeIntList = [&ostr, &write_list](
+            auto writeIntList = [&write_list](
                 std::vector<size_t> const& vals, char delim=';') {
                 auto get_val = [](
                     size_t const& v) -> size_t const& { return v; };

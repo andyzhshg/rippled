@@ -17,31 +17,24 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
+#include <ripple/app/ledger/LedgerMaster.h>
 #include <ripple/app/misc/HashRouter.h>
 #include <ripple/app/misc/NetworkOPs.h>
-#include <ripple/core/ConfigSections.h>
-#include <ripple/core/DatabaseCon.h>
-#include <ripple/basics/contract.h>
-#include <ripple/basics/Log.h>
+#include <ripple/app/misc/ValidatorList.h>
+#include <ripple/app/misc/ValidatorSite.h>
+#include <ripple/basics/base64.h>
 #include <ripple/basics/make_SSLContext.h>
-#include <ripple/beast/rfc2616.h>
-#include <ripple/protocol/JsonFields.h>
-#include <ripple/rpc/json_body.h>
-#include <ripple/server/SimpleWriter.h>
-#include <ripple/overlay/Cluster.h>
-#include <ripple/overlay/impl/ConnectAttempt.h>
-#include <ripple/overlay/impl/OverlayImpl.h>
-#include <ripple/overlay/impl/PeerImp.h>
-#include <ripple/overlay/impl/TMHello.h>
-#include <ripple/peerfinder/make_Manager.h>
-#include <ripple/protocol/STExchange.h>
-#include <ripple/beast/core/ByteOrder.h>
-#include <beast/core/detail/base64.hpp>
 #include <ripple/beast/core/LexicalCast.h>
-#include <beast/http.hpp>
-#include <beast/core/detail/ci_char_traits.hpp>
-#include <ripple/beast/utility/WrappedSink.h>
+#include <ripple/core/DatabaseCon.h>
+#include <ripple/nodestore/DatabaseShard.h>
+#include <ripple/overlay/Cluster.h>
+#include <ripple/overlay/predicates.h>
+#include <ripple/overlay/impl/ConnectAttempt.h>
+#include <ripple/overlay/impl/PeerImp.h>
+#include <ripple/peerfinder/make_Manager.h>
+#include <ripple/rpc/json_body.h>
+#include <ripple/rpc/handlers/GetCounts.h>
+#include <ripple/server/SimpleWriter.h>
 
 #include <boost/utility/in_place_factory.hpp>
 
@@ -54,8 +47,7 @@ struct get_peer_json
 
     Json::Value json;
 
-    get_peer_json ()
-    { }
+    get_peer_json() = default;
 
     void operator() (std::shared_ptr<Peer> const& peer)
     {
@@ -67,6 +59,18 @@ struct get_peer_json
         return json;
     }
 };
+
+namespace CrawlOptions
+{
+    enum
+    {
+        Disabled     = 0,
+        Overlay      = (1 << 0),
+        ServerInfo   = (1 << 1),
+        ServerCounts = (1 << 2),
+        Unl          = (1 << 3)
+    };
+}
 
 //------------------------------------------------------------------------------
 
@@ -98,11 +102,10 @@ OverlayImpl::Timer::stop()
 void
 OverlayImpl::Timer::run()
 {
-    error_code ec;
     timer_.expires_from_now (std::chrono::seconds(1));
     timer_.async_wait(overlay_.strand_.wrap(
         std::bind(&Timer::on_timer, shared_from_this(),
-            beast::asio::placeholders::error)));
+            std::placeholders::_1)));
 }
 
 void
@@ -127,7 +130,7 @@ OverlayImpl::Timer::on_timer (error_code ec)
     timer_.expires_from_now (std::chrono::seconds(1));
     timer_.async_wait(overlay_.strand_.wrap(std::bind(
         &Timer::on_timer, shared_from_this(),
-            beast::asio::placeholders::error)));
+            std::placeholders::_1)));
 }
 
 //------------------------------------------------------------------------------
@@ -219,22 +222,22 @@ OverlayImpl::onHandoff (std::unique_ptr <beast::asio::ssl_bundle>&& ssl_bundle,
 
     {
         auto const types = beast::rfc2616::split_commas(
-            request.headers["Connect-As"]);
+            request["Connect-As"]);
         if (std::find_if(types.begin(), types.end(),
                 [](std::string const& s)
                 {
-                    return beast::detail::ci_equal(s, "peer");
+                    return boost::beast::detail::iequals(s, "peer");
                 }) == types.end())
         {
             handoff.moved = false;
             handoff.response = makeRedirectResponse(slot, request,
                 remote_endpoint.address());
-            handoff.keep_alive = is_keep_alive(request);
+            handoff.keep_alive = beast::rfc2616::is_keep_alive(request);
             return handoff;
         }
     }
 
-    auto hello = parseHello (true, request.headers, journal);
+    auto hello = parseHello (true, request, journal);
     if(! hello)
     {
         m_peerFinder->on_closed(slot);
@@ -285,7 +288,7 @@ OverlayImpl::onHandoff (std::unique_ptr <beast::asio::ssl_bundle>&& ssl_bundle,
         handoff.moved = false;
         handoff.response = makeRedirectResponse(slot, request,
             remote_endpoint.address());
-        handoff.keep_alive = is_keep_alive(request);
+        handoff.keep_alive = beast::rfc2616::is_keep_alive(request);
         return handoff;
     }
 
@@ -319,21 +322,7 @@ OverlayImpl::isPeerUpgrade(http_request_type const& request)
     if (! is_upgrade(request))
         return false;
     auto const versions = parse_ProtocolVersions(
-        request.headers["Upgrade"]);
-    if (versions.size() == 0)
-        return false;
-    return true;
-}
-
-bool
-OverlayImpl::isPeerUpgrade(http_response_type const& response)
-{
-    if (! is_upgrade(response))
-        return false;
-    if(response.status != 101)
-        return false;
-    auto const versions = parse_ProtocolVersions(
-        response.headers["Upgrade"]);
+        request["Upgrade"]);
     if (versions.size() == 0)
         return false;
     return true;
@@ -351,21 +340,21 @@ std::shared_ptr<Writer>
 OverlayImpl::makeRedirectResponse (PeerFinder::Slot::ptr const& slot,
     http_request_type const& request, address_type remote_address)
 {
-    beast::http::response_v1<json_body> msg;
-    msg.version = request.version;
-    msg.status = 503;
-    msg.reason = "Service Unavailable";
-    msg.headers.insert("Server", BuildInfo::getFullVersionString());
-    msg.headers.insert("Remote-Address", remote_address.to_string());
-    msg.headers.insert("Content-Type", "application/json");
-    msg.body = Json::objectValue;
+    boost::beast::http::response<json_body> msg;
+    msg.version(request.version());
+    msg.result(boost::beast::http::status::service_unavailable);
+    msg.insert("Server", BuildInfo::getFullVersionString());
+    msg.insert("Remote-Address", remote_address);
+    msg.insert("Content-Type", "application/json");
+    msg.insert(boost::beast::http::field::connection, "close");
+    msg.body() = Json::objectValue;
     {
         auto const result = m_peerFinder->redirect(slot);
-        Json::Value& ips = (msg.body["peer-ips"] = Json::arrayValue);
+        Json::Value& ips = (msg.body()["peer-ips"] = Json::arrayValue);
         for (auto const& _ : m_peerFinder->redirect(slot))
             ips.append(_.address.to_string());
     }
-    prepare(msg, beast::http::connection::close);
+    msg.prepare_payload();
     return std::make_shared<SimpleWriter>(msg);
 }
 
@@ -375,14 +364,14 @@ OverlayImpl::makeErrorResponse (PeerFinder::Slot::ptr const& slot,
     address_type remote_address,
     std::string text)
 {
-    beast::http::response_v1<beast::http::string_body> msg;
-    msg.version = request.version;
-    msg.status = 400;
-    msg.reason = "Bad Request";
-    msg.headers.insert("Server", BuildInfo::getFullVersionString());
-    msg.headers.insert("Remote-Address", remote_address.to_string());
-    msg.body = text;
-    prepare(msg, beast::http::connection::close);
+    boost::beast::http::response<boost::beast::http::string_body> msg;
+    msg.version(request.version());
+    msg.result(boost::beast::http::status::bad_request);
+    msg.insert("Server", BuildInfo::getFullVersionString());
+    msg.insert("Remote-Address", remote_address.to_string());
+    msg.insert(boost::beast::http::field::connection, "close");
+    msg.body() = text;
+    msg.prepare_payload();
     return std::make_shared<SimpleWriter>(msg);
 }
 
@@ -447,7 +436,7 @@ OverlayImpl::add_active (std::shared_ptr<PeerImp> const& peer)
         "activated " << peer->getRemoteAddress() <<
         " (" << peer->id() << ":" <<
         toBase58 (
-            TokenType::TOKEN_NODE_PUBLIC,
+            TokenType::NodePublic,
             peer->getNodePublic()) << ")";
 
     // As we are not on the strand, run() must be called
@@ -480,57 +469,6 @@ OverlayImpl::checkStopped ()
 }
 
 void
-OverlayImpl::setupValidatorKeyManifests (BasicConfig const& config,
-                                         DatabaseCon& db)
-{
-    auto const loaded = manifestCache_.loadValidatorKeys (
-        config.section (SECTION_VALIDATOR_KEYS),
-        journal_);
-
-    if (!loaded)
-        Throw<std::runtime_error> (
-            "Unable to load keys from [" SECTION_VALIDATOR_KEYS "]");
-
-    auto const& validation_manifest =
-        config.section (SECTION_VALIDATION_MANIFEST);
-
-    if (! validation_manifest.lines().empty())
-    {
-        std::string s;
-        s.reserve (188);
-        for (auto const& line : validation_manifest.lines())
-            s += beast::rfc2616::trim(line);
-        if (auto mo = make_Manifest (beast::detail::base64_decode(s)))
-        {
-            manifestCache_.configManifest (
-                std::move (*mo),
-                app_.validators(),
-                journal_);
-        }
-        else
-        {
-            Throw<std::runtime_error> ("Malformed manifest in config");
-        }
-    }
-    else
-    {
-        JLOG(journal_.debug()) << "No [" SECTION_VALIDATION_MANIFEST <<
-            "] section in config";
-    }
-
-    manifestCache_.load (
-        db,
-        app_.validators(),
-        journal_);
-}
-
-void
-OverlayImpl::saveValidatorKeyManifests (DatabaseCon& db) const
-{
-    manifestCache_.save (db);
-}
-
-void
 OverlayImpl::onPrepare()
 {
     PeerFinder::Config config;
@@ -543,8 +481,17 @@ OverlayImpl::onPrepare()
     auto const port = serverHandler_.setup().overlay.port;
 
     config.peerPrivate = app_.config().PEER_PRIVATE;
-    config.wantIncoming =
-        (! config.peerPrivate) && (port != 0);
+
+    // Servers with peer privacy don't want to allow incoming connections
+    config.wantIncoming = (! config.peerPrivate) && (port != 0);
+
+    // This will cause servers configured as validators to request that
+    // peers they connect to never report their IP address. We set this
+    // after we set the 'wantIncoming' because we want a "soft" version
+    // of peer privacy unless the operator explicitly asks for it.
+    if (!app_.getValidationPublicKey().empty())
+        config.peerPrivate = true;
+
     // if it's a private peer or we are running as standalone
     // automatic connections would defeat the purpose.
     config.autoConnect =
@@ -560,13 +507,22 @@ OverlayImpl::onPrepare()
     m_peerFinder->setConfig (config);
 
     // Populate our boot cache: if there are no entries in [ips] then we use
-    // the entries in [ips_fixed]. If both are empty, we resort to a round-robin
-    // pool.
+    // the entries in [ips_fixed].
     auto bootstrapIps = app_.config().IPS.empty()
         ? app_.config().IPS_FIXED
         : app_.config().IPS;
+
+
+    // If nothing is specified, default to several well-known high-capacity
+    // servers to serve as bootstrap:
     if (bootstrapIps.empty ())
-        bootstrapIps.push_back ("r.ripple.com 51235");
+    {
+        // Pool of servers operated by Ripple Labs Inc. - https://ripple.com
+        bootstrapIps.push_back("r.ripple.com 51235");
+
+        // Pool of servers operated by Alloy Networks - https://www.alloy.ee
+        bootstrapIps.push_back("zaphod.alloy.ee 51235");
+    }
 
     m_resolver.resolve (bootstrapIps,
         [this](std::string const& name,
@@ -637,26 +593,18 @@ void
 OverlayImpl::onWrite (beast::PropertyStream::Map& stream)
 {
     beast::PropertyStream::Set set ("traffic", stream);
-    auto stats = m_traffic.getCounts();
-    for (auto& i : stats)
+    auto const stats = m_traffic.getCounts();
+    for (auto const& i : stats)
     {
-        if (! i.second.messagesIn && ! i.second.messagesOut)
-            continue;
-
-        beast::PropertyStream::Map item (set);
-        item["category"] = i.first;
-        item["bytes_in"] =
-            beast::lexicalCast<std::string>
-                (i.second.bytesIn.load());
-        item["messages_in"] =
-            beast::lexicalCast<std::string>
-                (i.second.messagesIn.load());
-        item["bytes_out"] =
-            beast::lexicalCast<std::string>
-                (i.second.bytesOut.load());
-        item["messages_out"] =
-            beast::lexicalCast<std::string>
-                (i.second.messagesOut.load());
+        if (i)
+        {
+            beast::PropertyStream::Map item(set);
+            item["category"] = i.name;
+            item["bytes_in"] = std::to_string(i.bytesIn.load());
+            item["messages_in"] = std::to_string(i.messagesIn.load());
+            item["bytes_out"] = std::to_string(i.bytesOut.load());
+            item["messages_out"] = std::to_string(i.messagesOut.load());
+        }
     }
 }
 
@@ -684,7 +632,7 @@ OverlayImpl::activate (std::shared_ptr<PeerImp> const& peer)
         "activated " << peer->getRemoteAddress() <<
         " (" << peer->id() <<
         ":" << toBase58 (
-            TokenType::TOKEN_NODE_PUBLIC,
+            TokenType::NodePublic,
             peer->getNodePublic()) << ")";
 
     // We just accepted this peer so we have non-zero active peers
@@ -709,26 +657,34 @@ OverlayImpl::onManifests (
 
     JLOG(journal.debug()) << "TMManifest, " << n << (n == 1 ? " item" : " items");
 
-    bool const history = m->history ();
     for (std::size_t i = 0; i < n; ++i)
     {
         auto& s = m->list ().Get (i).stobject ();
 
-        if (auto mo = make_Manifest (s))
+        if (auto mo = deserializeManifest(s))
         {
             uint256 const hash = mo->hash ();
-            if (!hashRouter.addSuppressionPeer (hash, from->id ()))
+            if (!hashRouter.addSuppressionPeer (hash, from->id ())) {
+                JLOG(journal.info()) << "Duplicate manifest #" << i + 1;
                 continue;
+            }
+
+            if (! app_.validators().listed (mo->masterKey))
+            {
+                JLOG(journal.info()) << "Untrusted manifest #" << i + 1;
+                app_.getOPs().pubManifest (*mo);
+                continue;
+            }
 
             auto const serialized = mo->serialized;
-            auto const result = manifestCache_.applyManifest (
-                std::move(*mo),
-                app_.validators(),
-                journal);
 
-            if (result == ManifestDisposition::accepted ||
-                    result == ManifestDisposition::untrusted)
-                app_.getOPs().pubManifest (*make_Manifest(serialized));
+            auto const result = app_.validatorManifests ().applyManifest (
+                std::move(*mo));
+
+            if (result == ManifestDisposition::accepted)
+            {
+                app_.getOPs().pubManifest (*deserializeManifest(serialized));
+            }
 
             if (result == ManifestDisposition::accepted)
             {
@@ -741,18 +697,7 @@ OverlayImpl::onManifests (
                 convert (serialized, rawData);
                 *db << sql, soci::use (rawData);
                 tr.commit ();
-            }
 
-            if (history)
-            {
-                // Historical manifests are sent on initial peer connections.
-                // They do not need to be forwarded to other peers.
-                hashRouter.shouldRelay (hash);
-                continue;
-            }
-
-            if (result == ManifestDisposition::accepted)
-            {
                 protocol::TMManifests o;
                 o.add_list ()->set_stobject (s);
 
@@ -764,7 +709,8 @@ OverlayImpl::onManifests (
             }
             else
             {
-                JLOG(journal.info()) << "Bad manifest #" << i + 1;
+                JLOG(journal.info()) << "Bad manifest #" << i + 1 <<
+                    ": " << to_string(result);
             }
         }
         else
@@ -782,6 +728,102 @@ OverlayImpl::reportTraffic (
     int number)
 {
     m_traffic.addCount (cat, isInbound, number);
+}
+
+Json::Value
+OverlayImpl::crawlShards(bool pubKey, std::uint32_t hops)
+{
+    using namespace std::chrono;
+    using namespace std::chrono_literals;
+
+    Json::Value jv(Json::objectValue);
+    auto const numPeers {size()};
+    if (numPeers == 0)
+        return jv;
+
+    // If greater than a hop away, we may need to gather or freshen data
+    if (hops > 0)
+    {
+        // Prevent crawl spamming
+        clock_type::time_point const last(csLast_.load());
+        if ((clock_type::now() - last) > 60s)
+        {
+            auto const timeout(seconds((hops * hops) * 10));
+            std::unique_lock<std::mutex> l {csMutex_};
+
+            // Check if already requested
+            if (csIDs_.empty())
+            {
+                {
+                    std::lock_guard <decltype(mutex_)> lock {mutex_};
+                    for (auto& id : ids_)
+                        csIDs_.emplace(id.first);
+                }
+
+                // Relay request to active peers
+                protocol::TMGetPeerShardInfo tmGPS;
+                tmGPS.set_hops(hops);
+                foreach(send_always(std::make_shared<Message>(
+                    tmGPS, protocol::mtGET_PEER_SHARD_INFO)));
+
+                if (csCV_.wait_for(l, timeout) == std::cv_status::timeout)
+                {
+                    csIDs_.clear();
+                    csCV_.notify_all();
+                }
+                csLast_ = duration_cast<seconds>(
+                    clock_type::now().time_since_epoch());
+            }
+            else
+                csCV_.wait_for(l, timeout);
+        }
+    }
+
+    // Combine the shard info from peers and their sub peers
+    hash_map<PublicKey, PeerImp::ShardInfo> peerShardInfo;
+    for_each([&](std::shared_ptr<PeerImp> const& peer)
+    {
+        if (auto psi = peer->getPeerShardInfo())
+        {
+            for (auto const& e : *psi)
+            {
+                auto it {peerShardInfo.find(e.first)};
+                if (it != peerShardInfo.end())
+                    // The key exists so join the shard indexes.
+                    it->second.shardIndexes += e.second.shardIndexes;
+                else
+                    peerShardInfo.emplace(std::move(e));
+            }
+        }
+    });
+
+    // Prepare json reply
+    auto& av = jv[jss::peers] = Json::Value(Json::arrayValue);
+    for (auto const& e : peerShardInfo)
+    {
+        auto& pv {av.append(Json::Value(Json::objectValue))};
+        if (pubKey)
+            pv[jss::public_key] = toBase58(TokenType::NodePublic, e.first);
+
+        auto const& address {e.second.endpoint.address()};
+        if (!address.is_unspecified())
+            pv[jss::ip] = address.to_string();
+
+        pv[jss::complete_shards] = to_string(e.second.shardIndexes);
+    }
+
+    return jv;
+}
+
+void
+OverlayImpl::lastLink(std::uint32_t id)
+{
+    // Notify threads when every peer has received a last link.
+    // This doesn't account for every node that might reply but
+    // it is adequate.
+    std::lock_guard<std::mutex> l {csMutex_};
+    if (csIDs_.erase(id) && csIDs_.empty())
+        csCV_.notify_all();
 }
 
 std::size_t
@@ -832,7 +874,7 @@ OverlayImpl::limit()
 }
 
 Json::Value
-OverlayImpl::crawl()
+OverlayImpl::getOverlayInfo()
 {
     using namespace std::chrono;
     Json::Value jv;
@@ -841,7 +883,7 @@ OverlayImpl::crawl()
     for_each ([&](std::shared_ptr<PeerImp>&& sp)
     {
         auto& pv = av.append(Json::Value(Json::objectValue));
-        pv[jss::public_key] = beast::detail::base64_encode(
+        pv[jss::public_key] = base64_encode(
             sp->getNodePublic().data(),
                 sp->getNodePublic().size());
         pv[jss::type] = sp->slot()->inbound() ?
@@ -863,12 +905,87 @@ OverlayImpl::crawl()
                     sp->getRemoteAddress().port());
             }
         }
-        auto version = sp->getVersion ();
-        if (!version.empty ())
-            pv["version"] = version;
+
+        {
+            auto version {sp->getVersion()};
+            if (!version.empty())
+                pv[jss::version] = std::move(version);
+        }
+
+        std::uint32_t minSeq, maxSeq;
+        sp->ledgerRange(minSeq, maxSeq);
+        if (minSeq != 0 || maxSeq != 0)
+            pv[jss::complete_ledgers] =
+                std::to_string(minSeq) + "-" +
+                    std::to_string(maxSeq);
+
+        if (auto shardIndexes = sp->getShardIndexes())
+            pv[jss::complete_shards] = to_string(*shardIndexes);
     });
 
     return jv;
+}
+
+Json::Value
+OverlayImpl::getServerInfo()
+{
+    bool const humanReadable = false;
+    bool const admin = false;
+    bool const counters = false;
+
+    Json::Value server_info = app_.getOPs().getServerInfo(humanReadable, admin, counters);
+
+    // Filter out some information
+    server_info.removeMember(jss::hostid);
+    server_info.removeMember(jss::load_factor_fee_escalation);
+    server_info.removeMember(jss::load_factor_fee_queue);
+    server_info.removeMember(jss::validation_quorum);
+
+    if (server_info.isMember(jss::validated_ledger))
+    {
+        Json::Value& validated_ledger = server_info[jss::validated_ledger];
+
+        validated_ledger.removeMember(jss::base_fee);
+        validated_ledger.removeMember(jss::reserve_base_xrp);
+        validated_ledger.removeMember(jss::reserve_inc_xrp);
+    }
+
+    return server_info;
+}
+
+Json::Value
+OverlayImpl::getServerCounts()
+{
+    return getCountsJson(app_, 10);
+}
+
+Json::Value
+OverlayImpl::getUnlInfo()
+{
+    Json::Value validators = app_.validators().getJson();
+
+    if (validators.isMember(jss::publisher_lists))
+    {
+        Json::Value& publisher_lists = validators[jss::publisher_lists];
+
+        for (auto& publisher : publisher_lists)
+        {
+            publisher.removeMember(jss::list);
+        }
+    }
+
+    validators.removeMember(jss::signing_keys);
+    validators.removeMember(jss::trusted_validator_keys);
+    validators.removeMember(jss::validation_quorum);
+
+    Json::Value validatorSites = app_.validatorSites().getJson();
+
+    if (validatorSites.isMember(jss::validator_sites))
+    {
+        validators[jss::validator_sites] = std::move(validatorSites[jss::validator_sites]);
+    }
+
+    return validators;
 }
 
 // Returns information on verified peers.
@@ -882,17 +999,35 @@ bool
 OverlayImpl::processRequest (http_request_type const& req,
     Handoff& handoff)
 {
-    if (req.url != "/crawl")
+    if (req.target() != "/crawl" || setup_.crawlOptions == CrawlOptions::Disabled)
         return false;
 
-    beast::http::response_v1<json_body> msg;
-    msg.version = req.version;
-    msg.status = 200;
-    msg.reason = "OK";
-    msg.headers.insert("Server", BuildInfo::getFullVersionString());
-    msg.headers.insert("Content-Type", "application/json");
-    msg.body["overlay"] = crawl();
-    prepare(msg, beast::http::connection::close);
+    boost::beast::http::response<json_body> msg;
+    msg.version(req.version());
+    msg.result(boost::beast::http::status::ok);
+    msg.insert("Server", BuildInfo::getFullVersionString());
+    msg.insert("Content-Type", "application/json");
+    msg.insert("Connection", "close");
+    msg.body()["version"] = Json::Value(2u);
+
+    if (setup_.crawlOptions & CrawlOptions::Overlay)
+    {
+        msg.body()["overlay"] = getOverlayInfo();
+    }
+    if (setup_.crawlOptions & CrawlOptions::ServerInfo)
+    {
+        msg.body()["server"] = getServerInfo();
+    }
+    if (setup_.crawlOptions & CrawlOptions::ServerCounts)
+    {
+        msg.body()["counts"] = getServerCounts();
+    }
+    if (setup_.crawlOptions & CrawlOptions::Unl)
+    {
+        msg.body()["unl"] = getUnlInfo();
+    }
+
+    msg.prepare_payload();
     handoff.response = std::make_shared<SimpleWriter>(msg);
     return true;
 }
@@ -939,17 +1074,32 @@ OverlayImpl::findPeerByShortID (Peer::id_t const& id)
     return {};
 }
 
+// A public key hash map was not used due to the peer connect/disconnect
+// update overhead outweighing the performance of a small set linear search.
+std::shared_ptr<Peer>
+OverlayImpl::findPeerByPublicKey (PublicKey const& pubKey)
+{
+    std::lock_guard <decltype(mutex_)> lock(mutex_);
+    for (auto const& e : ids_)
+    {
+        if (auto peer = e.second.lock())
+        {
+            if (peer->getNodePublic() == pubKey)
+                return peer;
+        }
+    }
+    return {};
+}
+
 void
 OverlayImpl::send (protocol::TMProposeSet& m)
 {
     if (setup_.expire)
         m.set_hops(0);
-    auto const sm = std::make_shared<Message>(
-        m, protocol::mtPROPOSE_LEDGER);
+    auto const sm = std::make_shared<Message>(m, protocol::mtPROPOSE_LEDGER);
     for_each([&](std::shared_ptr<PeerImp>&& p)
     {
-        if (! m.has_hops() || p->hopsAware())
-            p->send(sm);
+        p->send(sm);
     });
 }
 void
@@ -957,58 +1107,52 @@ OverlayImpl::send (protocol::TMValidation& m)
 {
     if (setup_.expire)
         m.set_hops(0);
-    auto const sm = std::make_shared<Message>(
-        m, protocol::mtVALIDATION);
+    auto const sm = std::make_shared<Message>(m, protocol::mtVALIDATION);
     for_each([&](std::shared_ptr<PeerImp>&& p)
     {
-        if (! m.has_hops() || p->hopsAware())
-            p->send(sm);
+        p->send(sm);
     });
 
     SerialIter sit (m.validation().data(), m.validation().size());
-    auto val = std::make_shared <
-        STValidation> (std::ref (sit), false);
+    auto val = std::make_shared<STValidation>(
+        std::ref(sit),
+        [this](PublicKey const& pk) {
+            return calcNodeID(app_.validatorManifests().getMasterKey(pk));
+        },
+        false);
     app_.getOPs().pubValidation (val);
 }
 
 void
-OverlayImpl::relay (protocol::TMProposeSet& m,
-    uint256 const& uid)
+OverlayImpl::relay (protocol::TMProposeSet& m, uint256 const& uid)
 {
     if (m.has_hops() && m.hops() >= maxTTL)
         return;
-    auto const toSkip = app_.getHashRouter().shouldRelay(uid);
-    if (!toSkip)
-        return;
-    auto const sm = std::make_shared<Message>(
-        m, protocol::mtPROPOSE_LEDGER);
-    for_each([&](std::shared_ptr<PeerImp>&& p)
+    if (auto const toSkip = app_.getHashRouter().shouldRelay(uid))
     {
-        if (toSkip->find(p->id()) != toSkip->end())
-            return;
-        if (! m.has_hops() || p->hopsAware())
-            p->send(sm);
-    });
+        auto const sm = std::make_shared<Message>(m, protocol::mtPROPOSE_LEDGER);
+        for_each([&](std::shared_ptr<PeerImp>&& p)
+        {
+            if (toSkip->find(p->id()) == toSkip->end())
+                p->send(sm);
+        });
+    }
 }
 
 void
-OverlayImpl::relay (protocol::TMValidation& m,
-    uint256 const& uid)
+OverlayImpl::relay (protocol::TMValidation& m, uint256 const& uid)
 {
     if (m.has_hops() && m.hops() >= maxTTL)
         return;
-    auto const toSkip = app_.getHashRouter().shouldRelay(uid);
-    if (! toSkip)
-        return;
-    auto const sm = std::make_shared<Message>(
-        m, protocol::mtVALIDATION);
-    for_each([&](std::shared_ptr<PeerImp>&& p)
+    if (auto const toSkip = app_.getHashRouter().shouldRelay(uid))
     {
-        if (toSkip->find(p->id()) != toSkip->end())
-            return;
-        if (! m.has_hops() || p->hopsAware())
-            p->send(sm);
-    });
+        auto const sm = std::make_shared<Message>(m, protocol::mtVALIDATION);
+        for_each([&](std::shared_ptr<PeerImp>&& p)
+        {
+            if (toSkip->find(p->id()) == toSkip->end())
+                p->send(sm);
+        });
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -1025,17 +1169,32 @@ OverlayImpl::remove (Child& child)
 void
 OverlayImpl::stop()
 {
-    std::lock_guard<decltype(mutex_)> lock(mutex_);
-    if (work_)
+    // Calling list_[].second->stop() may cause list_ to be modified
+    // (OverlayImpl::remove() may be called on this same thread).  So
+    // iterating directly over list_ to call child->stop() could lead to
+    // undefined behavior.
+    //
+    // Therefore we copy all of the weak/shared ptrs out of list_ before we
+    // start calling stop() on them.  That guarantees OverlayImpl::remove()
+    // won't be called until vector<> children leaves scope.
+    std::vector<std::shared_ptr<Child>> children;
     {
+        std::lock_guard<decltype(mutex_)> lock(mutex_);
+        if (!work_)
+            return;
         work_ = boost::none;
-        for (auto& _ : list_)
+
+        children.reserve (list_.size());
+        for (auto const& element : list_)
         {
-            auto const child = _.second.lock();
-            // Happens when the child is about to be destroyed
-            if (child != nullptr)
-                child->stop();
+            children.emplace_back (element.second.lock());
         }
+    } // lock released
+
+    for (auto const& child : children)
+    {
+        if (child != nullptr)
+            child->stop();
     }
 }
 
@@ -1085,25 +1244,73 @@ Overlay::Setup
 setup_Overlay (BasicConfig const& config)
 {
     Overlay::Setup setup;
-    auto const& section = config.section("overlay");
-    setup.context = make_SSLContext();
-    setup.expire = get<bool>(section, "expire", false);
 
-    set (setup.ipLimit, "ip_limit", section);
-    if (setup.ipLimit < 0)
-        Throw<std::runtime_error> ("Configured IP limit is invalid");
-
-    std::string ip;
-    set (ip, "public_ip", section);
-    if (! ip.empty ())
     {
-        bool valid;
-        std::tie (setup.public_ip, valid) =
-            beast::IP::Address::from_string (ip);
-        if (! valid || ! setup.public_ip.is_v4() ||
-                is_private (setup.public_ip))
-            Throw<std::runtime_error> ("Configured public IP is invalid");
+        auto const& section = config.section("overlay");
+        setup.context = make_SSLContext("");
+        setup.expire = get<bool>(section, "expire", false);
+
+        set(setup.ipLimit, "ip_limit", section);
+        if (setup.ipLimit < 0)
+            Throw<std::runtime_error>("Configured IP limit is invalid");
+
+        std::string ip;
+        set(ip, "public_ip", section);
+        if (!ip.empty())
+        {
+            boost::system::error_code ec;
+            setup.public_ip = beast::IP::Address::from_string(ip, ec);
+            if (ec || beast::IP::is_private(setup.public_ip))
+                Throw<std::runtime_error>("Configured public IP is invalid");
+        }
     }
+    {
+        auto const& section = config.section("crawl");
+        auto const& values = section.values();
+
+        if (values.size() > 1)
+        {
+            Throw<std::runtime_error>(
+                "Configured [crawl] section is invalid, too many values");
+        }
+
+        bool crawlEnabled = true;
+
+        // Only allow "0|1" as a value
+        if (values.size() == 1)
+        {
+            try
+            {
+                crawlEnabled = boost::lexical_cast<bool>(values.front());
+            }
+            catch (boost::bad_lexical_cast const&)
+            {
+                Throw<std::runtime_error>(
+                    "Configured [crawl] section has invalid value: " + values.front());
+            }
+        }
+
+        if (crawlEnabled)
+        {
+            if (get<bool>(section, "overlay", true))
+            {
+                setup.crawlOptions |= CrawlOptions::Overlay;
+            }
+            if (get<bool>(section, "server", true))
+            {
+                setup.crawlOptions |= CrawlOptions::ServerInfo;
+            }
+            if (get<bool>(section, "counts", false))
+            {
+                setup.crawlOptions |= CrawlOptions::ServerCounts;
+            }
+            if (get<bool>(section, "unl", true))
+            {
+                setup.crawlOptions |= CrawlOptions::Unl;
+            }
+        }
+    }
+
     return setup;
 }
 

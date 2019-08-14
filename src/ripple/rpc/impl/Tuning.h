@@ -45,7 +45,7 @@ static LimitRange const accountObjects = {10, 200, 400};
 static LimitRange const accountOffers = {10, 200, 400};
 
 /** Limits for the book_offers command. */
-static LimitRange const bookOffers = {0, 0, 400};
+static LimitRange const bookOffers = {0, 300, 400};
 
 /** Limits for the no_ripple_check command. */
 static LimitRange const noRippleCheck = {10, 300, 400};
@@ -55,8 +55,7 @@ static int const defaultAutoFillFeeDivisor = 1;
 static int const maxPathfindsInProgress = 2;
 static int const maxPathfindJobCount = 50;
 static int const maxJobQueueClients = 500;
-using namespace std::chrono_literals;
-auto constexpr maxValidatedLedgerAge = 2min;
+auto constexpr maxValidatedLedgerAge = std::chrono::minutes {2};
 static int const maxRequestSize = 1000000;
 
 /** Maximum number of pages in one response from a binary LedgerData request. */

@@ -17,14 +17,15 @@
 */
 //==============================================================================
 
-#include <BeastConfig.h>
 #include <ripple/app/paths/PathRequests.h>
 #include <ripple/app/ledger/LedgerMaster.h>
 #include <ripple/app/main/Application.h>
 #include <ripple/basics/Log.h>
 #include <ripple/core/JobQueue.h>
-#include <ripple/protocol/JsonFields.h>
+#include <ripple/net/RPCErr.h>
+#include <ripple/protocol/ErrorCodes.h>
 #include <ripple/resource/Fees.h>
+#include <ripple/protocol/jss.h>
 #include <algorithm>
 
 namespace ripple {
@@ -56,7 +57,7 @@ void PathRequests::updateAll (std::shared_ptr <ReadView const> const& inLedger,
                               Job::CancelCallback shouldCancel)
 {
     auto event =
-        app_.getJobQueue().getLoadEventAP(
+        app_.getJobQueue().makeLoadEvent(
             jtPATH_FIND, "PathRequest::updateAll");
 
     std::vector<PathRequest::wptr> requests;
@@ -246,7 +247,12 @@ PathRequests::makeLegacyPathRequest(
     else
     {
         insertPathRequest (req);
-        app_.getLedgerMaster().newPathRequest();
+        if (! app_.getLedgerMaster().newPathRequest())
+        {
+            // The newPathRequest failed.  Tell the caller.
+            result.second = rpcError (rpcTOO_BUSY);
+            req.reset();
+        }
     }
 
     return std::move (result.second);

@@ -20,6 +20,8 @@
 #ifndef BEAST_RFC2616_HPP
 #define BEAST_RFC2616_HPP
 
+#include <boost/beast/http/message.hpp>
+#include <boost/beast/http/rfc7230.hpp>
 #include <boost/range/algorithm/equal.hpp>
 #include <boost/range/iterator_range.hpp>
 #include <boost/utility/string_ref.hpp>
@@ -44,10 +46,13 @@ namespace detail {
 
 struct ci_equal_pred
 {
+    explicit ci_equal_pred() = default;
+
     bool operator()(char c1, char c2)
     {
         // VFALCO TODO Use a table lookup here
-        return std::tolower(c1) == std::tolower(c2);
+        return std::tolower(static_cast<unsigned char>(c1)) ==
+               std::tolower(static_cast<unsigned char>(c2));
     }
 };
 
@@ -277,7 +282,7 @@ split_commas(FwdIt first, FwdIt last)
 
 template <class Result = std::vector<std::string>>
 Result
-split_commas(boost::string_ref const& s)
+split_commas(boost::beast::string_view const& s)
 {
     return split_commas(s.begin(), s.end());
 }
@@ -462,6 +467,17 @@ token_in_list(boost::string_ref const& value,
         if(ci_equal(item, token))
             return true;
     return false;
+}
+
+template<bool isRequest, class Body, class Fields>
+bool
+is_keep_alive(boost::beast::http::message<isRequest, Body, Fields> const& m)
+{
+    if(m.version() <= 10)
+        return boost::beast::http::token_list{
+            m[boost::beast::http::field::connection]}.exists("keep-alive");
+    return ! boost::beast::http::token_list{
+        m[boost::beast::http::field::connection]}.exists("close");
 }
 
 } // rfc2616

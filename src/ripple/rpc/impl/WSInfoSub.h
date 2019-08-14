@@ -23,9 +23,9 @@
 #include <ripple/server/WSSession.h>
 #include <ripple/net/InfoSub.h>
 #include <ripple/beast/net/IPAddressConversion.h>
-#include <ripple/json/Output.h>
-#include <ripple/json/to_string.h>
+#include <ripple/json/json_writer.h>
 #include <ripple/rpc/Role.h>
+#include <boost/utility/string_view.hpp>
 #include <memory>
 #include <string>
 
@@ -42,40 +42,37 @@ public:
         : InfoSub(source)
         , ws_(ws)
     {
-        auto const& h = ws->request().headers;
-        auto it = h.find("X-User");
-        if (it != h.end() &&
-            isIdentified(
-                ws->port(), beast::IPAddressConversion::from_asio(
-                    ws->remote_endpoint()).address(), it->second))
+        auto const& h = ws->request();
+        if (ipAllowed(beast::IPAddressConversion::from_asio(
+            ws->remote_endpoint()).address(), ws->port().secure_gateway_ip))
         {
-            user_ = it->second;
-            it = h.find("X-Forwarded-For");
+            auto it = h.find("X-User");
             if (it != h.end())
-                fwdfor_ = it->second;
+                user_ = it->value().to_string();
+            fwdfor_ = std::string(forwardedFor(h));
         }
     }
 
-    std::string
+    boost::string_view
     user() const
     {
         return user_;
     }
 
-    std::string
+    boost::string_view
     forwarded_for() const
     {
         return fwdfor_;
     }
 
     void
-    send(Json::Value const& jv, bool)
+    send(Json::Value const& jv, bool) override
     {
         auto sp = ws_.lock();
         if(! sp)
             return;
-        beast::streambuf sb;
-        stream(jv,
+        boost::beast::multi_buffer sb;
+        Json::stream(jv,
             [&](void const* data, std::size_t n)
             {
                 sb.commit(boost::asio::buffer_copy(
